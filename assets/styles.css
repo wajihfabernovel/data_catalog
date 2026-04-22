@@ -43,6 +43,94 @@ h1 {
     color: rgba(255, 255, 255, 0.9) !important;
 }
 
+.catalog-hero {
+    position: relative;
+    overflow: hidden;
+}
+
+.hero-kicker {
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.78) !important;
+    margin-bottom: 0.6rem;
+}
+
+.hero-donation {
+    margin-top: 0.8rem;
+    max-width: 780px;
+    font-size: 0.98rem;
+    color: rgba(255, 248, 214, 0.96) !important;
+}
+
+.hero-balloons {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.balloon {
+    position: absolute;
+    width: 42px;
+    height: 54px;
+    border-radius: 50% 50% 46% 46%;
+    opacity: 0.88;
+    box-shadow: inset -8px -10px 0 rgba(255, 255, 255, 0.18);
+    animation: floatBalloon 7s ease-in-out infinite;
+}
+
+.balloon::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: -22px;
+    width: 2px;
+    height: 24px;
+    background: rgba(255, 255, 255, 0.55);
+    transform: translateX(-50%);
+}
+
+.balloon-red {
+    top: 16px;
+    right: 148px;
+    background: #ff6b6b;
+    animation-delay: 0s;
+}
+
+.balloon-gold {
+    top: 44px;
+    right: 82px;
+    background: #ffd166;
+    animation-delay: 1.2s;
+}
+
+.balloon-sky {
+    top: 24px;
+    right: 30px;
+    background: #7bdff2;
+    animation-delay: 2s;
+}
+
+.balloon-navy {
+    top: 76px;
+    right: 196px;
+    background: #94b9ff;
+    animation-delay: 2.8s;
+}
+
+@keyframes floatBalloon {
+    0% {
+        transform: translateY(0px) rotate(-2deg);
+    }
+    50% {
+        transform: translateY(-10px) rotate(2deg);
+    }
+    100% {
+        transform: translateY(0px) rotate(-2deg);
+    }
+}
+
 p,
 label,
 span,
