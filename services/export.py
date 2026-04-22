@@ -104,18 +104,25 @@ def _write_table_summary(ws, table: dict) -> int:
     _style_field_row(
         ws,
         2,
+        "Owning team",
+        "Team accountable for this table",
+        table.get("owning_team", ""),
+    )
+    _style_field_row(
+        ws,
+        3,
         "Primary key",
         "Primary key parsed from Dataverse metadata",
         table.get("primary_key", ""),
     )
     _style_field_row(
         ws,
-        3,
+        4,
         "Column count",
         "Number of parsed property columns",
         str(len(table.get("schema", []))),
     )
-    return 5
+    return 6
 
 
 def _write_data_quality(ws, start_row: int, table: dict) -> int:
