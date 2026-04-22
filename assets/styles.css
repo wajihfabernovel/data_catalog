@@ -396,6 +396,7 @@ section[data-testid="stSidebar"] code {
 .badge-clean        { background: #e8f5e9; color: #1b5e20 !important; border: 1px solid #a5d6a7; }
 .badge-acceptable   { background: #fff8e1; color: #7a5100 !important; border: 1px solid #ffe082; }
 .badge-problematic  { background: #ffebee; color: #7d1e27 !important; border: 1px solid #ef9a9a; }
+.badge-team         { background: #e7f0fb; color: #1f4e79 !important; border: 1px solid #b8d2ee; }
 
 /* ── Tabs ────────────────────────────────────────────────────────── */
 button[data-baseweb="tab"] {
