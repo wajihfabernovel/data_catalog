@@ -399,10 +399,9 @@ def main() -> None:
         '<span class="balloon balloon-sky"></span>'
         '<span class="balloon balloon-navy"></span>'
         '</div>'
-        '<p class="hero-kicker">A cheerful little metadata command center</p>'
+        '<p class="hero-kicker">A cheerful little metadata catalog center</p>'
         "<h1>Dataverse Data Catalog</h1>"
-        "<p>Collaborative Streamlit cataloging tool for Dataverse metadata, backed by Supabase</p>"
-        '<p class="hero-donation">Made with a bit of love. If this catalog saves your day, imaginary donations are warmly accepted.</p>'
+        '<p class="hero-donation">Made with a bit of love. Donations are warmly accepted.</p>'
         "</div>",
         unsafe_allow_html=True,
     )
