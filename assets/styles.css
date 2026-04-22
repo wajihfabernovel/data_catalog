@@ -134,7 +134,6 @@ h1 {
 p,
 label,
 span,
-div,
 li,
 [data-testid="stMarkdownContainer"],
 [data-testid="stCaptionContainer"] {
@@ -357,15 +356,23 @@ section[data-testid="stSidebar"] code {
     margin-bottom: 1.5rem;
     box-shadow: 0 4px 24px rgba(18, 49, 79, 0.18);
 }
-.catalog-hero h1 {
+.catalog-hero h1,
+.catalog-hero h1 *,
+.catalog-hero [data-testid="stMarkdownContainer"] h1,
+.catalog-hero [data-testid="stMarkdownContainer"] h1 * {
     color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
     font-size: 1.9rem !important;
     font-weight: 800 !important;
     margin: 0 0 0.3rem 0 !important;
     letter-spacing: -0.03em !important;
 }
-.catalog-hero p {
-    color: rgba(255, 255, 255, 0.78) !important;
+.catalog-hero p,
+.catalog-hero p *,
+.catalog-hero [data-testid="stMarkdownContainer"] p,
+.catalog-hero [data-testid="stMarkdownContainer"] p * {
+    color: rgba(255, 255, 255, 0.9) !important;
+    -webkit-text-fill-color: rgba(255, 255, 255, 0.9) !important;
     font-size: 0.93rem !important;
     margin: 0 !important;
 }
