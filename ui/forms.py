@@ -10,6 +10,7 @@ from utils.helpers import (
     CHOICES_YES_NO_UNSURE,
     QUALITY_RATINGS,
     SIGNOFF_STATUS,
+    TEAM_OPTIONS,
     TARGET_RECOMMENDATIONS,
     WRITE_PATHS,
     widget_key,
@@ -29,6 +30,17 @@ def render_schema_section(table: dict) -> None:
         st.info("No schema columns were parsed for this table.")
         return
     st.dataframe(schema_df, use_container_width=True, hide_index=True)
+
+
+def render_table_context_section(table: dict) -> str:
+    st.markdown("#### Table Context")
+    table_key = table["table_key"]
+    return st.selectbox(
+        "Owning team",
+        TEAM_OPTIONS,
+        index=_select_index(TEAM_OPTIONS, table.get("owning_team", TEAM_OPTIONS[0])),
+        key=widget_key(table_key, "owning_team"),
+    )
 
 
 def render_relationships_section(table: dict) -> dict:
@@ -305,8 +317,9 @@ def render_signoff_section(table: dict) -> dict:
 
 
 def render_table_forms(table: dict) -> dict:
-    render_schema_section(table)
     updated = dict(table)
+    updated["owning_team"] = render_table_context_section(table)
+    render_schema_section(table)
     updated["relationships"] = render_relationships_section(table)
     updated["data_quality"] = render_data_quality_section(table)
     updated["pipeline"] = render_pipeline_section(table)
