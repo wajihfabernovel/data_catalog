@@ -18,15 +18,6 @@ def _iter_children(element: ET.Element, child_name: str) -> list[ET.Element]:
     return [child for child in element if _local_name(child.tag) == child_name]
 
 
-def _referenced_table_name(nav_type: str) -> str:
-    nav_type = nav_type.strip()
-    if nav_type.startswith("Collection(") and nav_type.endswith(")"):
-        nav_type = nav_type[len("Collection(") : -1]
-    if "." in nav_type:
-        return nav_type.rsplit(".", 1)[-1]
-    return nav_type
-
-
 def _extract_relationships(entity: ET.Element, primary_key: str, schema: list[dict]) -> dict:
     guid_columns = {
         column["column_name"]
@@ -39,15 +30,15 @@ def _extract_relationships(entity: ET.Element, primary_key: str, schema: list[di
             "references_table": "",
             "references_column": "",
             "cardinality": "",
-            "mandatory": "",
+            "mandatory": False,
         }
         for column_name in sorted(guid_columns, key=str.casefold)
     }
 
     for nav_property in _iter_children(entity, "NavigationProperty"):
-        nav_type = nav_property.attrib.get("Type", "").strip()
+        nav_name = nav_property.attrib.get("Name", "").strip()
         nullable = nav_property.attrib.get("Nullable", "").strip().lower()
-        mandatory = "YES" if nullable == "false" else "NO"
+        mandatory = nullable == "false"
         constraints = _iter_children(nav_property, "ReferentialConstraint")
         for constraint in constraints:
             fk_column = constraint.attrib.get("Property", "").strip()
@@ -56,7 +47,7 @@ def _extract_relationships(entity: ET.Element, primary_key: str, schema: list[di
 
             references_by_fk[fk_column].update(
                 {
-                    "references_table": _referenced_table_name(nav_type),
+                    "references_table": nav_name,
                     "references_column": constraint.attrib.get("ReferencedProperty", "").strip(),
                     "cardinality": "Many-to-One",
                     "mandatory": mandatory,
