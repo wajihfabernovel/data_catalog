@@ -13,6 +13,14 @@ QUALITY_RATINGS = ["CLEAN", "ACCEPTABLE", "PROBLEMATIC"]
 WRITE_PATHS = ["STORED PROCEDURE", "DAB", "DIRECT SQL", "UNKNOWN"]
 TARGET_RECOMMENDATIONS = ["KEEP AS IS", "REFACTOR", "MERGE WITH", "SPLIT INTO", "RETIRE"]
 SIGNOFF_STATUS = ["DRAFT", "IN REVIEW", "APPROVED"]
+TEAM_OPTIONS = [
+    "D&IG",
+    "Strategy",
+    "S&R",
+    "Modular Innovation",
+    "Analytics",
+    "Integration & Localization",
+]
 
 
 def normalize_table_names(raw_value: str) -> list[str]:
@@ -36,6 +44,7 @@ def build_default_table_state(parsed_table: dict) -> dict:
         "table_key": parsed_table["table_key"],
         "table_name": parsed_table["table_name"],
         "primary_key": parsed_table.get("primary_key", ""),
+        "owning_team": "D&IG",
         "schema": deepcopy(parsed_table.get("schema", [])),
         "relationships": {
             "references": [],
@@ -81,7 +90,7 @@ def merge_table_state(base_table: dict, stored_table: dict | None) -> dict:
     if not stored_table:
         return merged
 
-    for key in ["table_name", "primary_key", "table_key"]:
+    for key in ["table_name", "primary_key", "table_key", "owning_team"]:
         if stored_table.get(key):
             merged[key] = stored_table[key]
 
