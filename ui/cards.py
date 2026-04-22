@@ -42,11 +42,12 @@ def render_table_card(
         quality_rating,
         _QUALITY_BADGE_CLASS.get(quality_rating, "badge-acceptable"),
     )
+    team_badge = _badge(table.get("owning_team", "D&IG"), "badge-team")
 
     with st.container(border=True):
         summary_cols = st.columns([3, 1, 1])
         summary_cols[0].markdown(
-            f"### {table['table_name']} {signoff_badge} {quality_badge}",
+            f"### {table['table_name']} {signoff_badge} {quality_badge} {team_badge}",
             unsafe_allow_html=True,
         )
         pk = table.get("primary_key") or "N/A"
