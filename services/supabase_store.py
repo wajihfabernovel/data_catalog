@@ -67,6 +67,7 @@ class SupabaseStore:
                 "table_key": table_key,
                 "table_name": row.get("table_name", ""),
                 "primary_key": row.get("primary_key", ""),
+                "owning_team": row.get("owning_team", "D&IG"),
                 "schema": [],
                 "relationships": {"references": [], "referenced_by": []},
                 "data_quality": {
@@ -148,6 +149,7 @@ class SupabaseStore:
                 "table_key": table_key,
                 "table_name": table["table_name"],
                 "primary_key": table.get("primary_key", ""),
+                "owning_team": table.get("owning_team", "D&IG"),
                 "nullable_issues": table["data_quality"]["nullable_issues"],
                 "format_inconsistencies": table["data_quality"]["format_inconsistencies"],
                 "duplicate_records": table["data_quality"]["duplicate_records"],
