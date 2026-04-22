@@ -35,6 +35,14 @@ h1 {
     font-weight: 800;
 }
 
+.catalog-hero h1 {
+    color: #ffffff !important;
+}
+
+.catalog-hero p {
+    color: rgba(255, 255, 255, 0.9) !important;
+}
+
 p,
 label,
 span,
