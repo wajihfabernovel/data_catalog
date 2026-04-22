@@ -256,7 +256,14 @@ def table_export(updated_table: dict) -> None:
 def render_catalog_section() -> None:
     catalog_tables = st.session_state.get("catalog_tables", {})
     if not catalog_tables:
-        st.info("Configure Supabase, provide XML and table names, then parse to start the shared catalog.")
+        try:
+            refresh_from_database(show_message=False)
+            catalog_tables = st.session_state.get("catalog_tables", {})
+        except (RuntimeError, SupabaseConfigError):
+            catalog_tables = {}
+
+    if not catalog_tables:
+        st.info("No catalog data is loaded yet. Use Input & Sync to parse metadata or refresh from Supabase.")
         return
 
     render_catalog_stats(catalog_tables)
