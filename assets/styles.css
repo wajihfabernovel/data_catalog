@@ -1,3 +1,103 @@
+.block-container {
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+    max-width: 1200px;
+}
+
+.stApp {
+    background:
+        radial-gradient(circle at top left, rgba(47, 117, 181, 0.05), transparent 24%),
+        linear-gradient(180deg, #f8fbff 0%, #edf3f9 100%);
+}
+
+header[data-testid="stHeader"] {
+    background: rgba(255, 255, 255, 0.94) !important;
+    border-bottom: 1px solid rgba(23, 50, 74, 0.08);
+    backdrop-filter: blur(10px);
+}
+
+header[data-testid="stHeader"] * {
+    color: #17324a !important;
+    fill: #17324a !important;
+}
+
+header[data-testid="stHeader"] button:hover,
+header[data-testid="stHeader"] [data-testid="stToolbar"] button:hover {
+    background: rgba(31, 78, 121, 0.08) !important;
+}
+
+h1, h2, h3 {
+    letter-spacing: -0.02em;
+    color: #12314f;
+}
+
+h1 {
+    font-weight: 800;
+}
+
+.catalog-hero h1 {
+    color: #ffffff !important;
+}
+
+.catalog-hero p {
+    color: rgba(255, 255, 255, 0.9) !important;
+}
+
+.catalog-hero {
+    position: relative;
+    overflow: hidden;
+}
+
+.hero-kicker {
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.78) !important;
+    margin-bottom: 0.6rem;
+}
+
+.hero-donation {
+    margin-top: 0.8rem;
+    max-width: 780px;
+    font-size: 0.98rem;
+    color: rgba(255, 248, 214, 0.96) !important;
+}
+
+.hero-balloons {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.balloon {
+    position: absolute;
+    width: 42px;
+    height: 54px;
+    border-radius: 50% 50% 46% 46%;
+    opacity: 0.88;
+    box-shadow: inset -8px -10px 0 rgba(255, 255, 255, 0.18);
+    animation: floatBalloon 7s ease-in-out infinite;
+}
+
+.balloon::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: -22px;
+    width: 2px;
+    height: 24px;
+    background: rgba(255, 255, 255, 0.55);
+    transform: translateX(-50%);
+}
+
+.balloon-red {
+    top: 16px;
+    right: 148px;
+    background: #ff6b6b;
+    animation-delay: 0s;
+}
+
 .balloon-gold {
     top: 44px;
     right: 82px;
@@ -34,6 +134,7 @@
 p,
 label,
 span,
+div,
 li,
 [data-testid="stMarkdownContainer"],
 [data-testid="stCaptionContainer"] {
@@ -246,4 +347,165 @@ section[data-testid="stSidebar"] h3 {
 section[data-testid="stSidebar"] code {
     background: #e6eef7;
     color: #17324a !important;
+}
+
+/* ── Hero header ─────────────────────────────────────────────────── */
+.catalog-hero {
+    background: linear-gradient(135deg, #12314f 0%, #1f4e79 55%, #2e6ca8 100%);
+    border-radius: 16px;
+    padding: 1.75rem 2.25rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 4px 24px rgba(18, 49, 79, 0.18);
+}
+.catalog-hero h1 {
+    color: #ffffff !important;
+    font-size: 1.9rem !important;
+    font-weight: 800 !important;
+    margin: 0 0 0.3rem 0 !important;
+    letter-spacing: -0.03em !important;
+}
+.catalog-hero p {
+    color: rgba(255, 255, 255, 0.78) !important;
+    font-size: 0.93rem !important;
+    margin: 0 !important;
+}
+
+/* ── Status & quality badges ─────────────────────────────────────── */
+.status-badge {
+    display: inline-block;
+    padding: 0.17rem 0.6rem;
+    border-radius: 20px;
+    font-size: 0.67rem;
+    font-weight: 700;
+    letter-spacing: 0.055em;
+    text-transform: uppercase;
+    vertical-align: middle;
+    margin-left: 0.4rem;
+    line-height: 1.6;
+}
+.badge-draft    { background: #e8eef4; color: #4a6278 !important; border: 1px solid #c5d5e5; }
+.badge-review   { background: #fff8e1; color: #7a5100 !important; border: 1px solid #ffe082; }
+.badge-approved { background: #e8f5e9; color: #1b5e20 !important; border: 1px solid #a5d6a7; }
+.badge-clean        { background: #e8f5e9; color: #1b5e20 !important; border: 1px solid #a5d6a7; }
+.badge-acceptable   { background: #fff8e1; color: #7a5100 !important; border: 1px solid #ffe082; }
+.badge-problematic  { background: #ffebee; color: #7d1e27 !important; border: 1px solid #ef9a9a; }
+
+/* ── Tabs ────────────────────────────────────────────────────────── */
+button[data-baseweb="tab"] {
+    font-weight: 600 !important;
+    font-size: 0.88rem !important;
+    color: #4a6278 !important;
+    padding: 0.6rem 1.25rem !important;
+    transition: color 0.15s ease !important;
+}
+button[data-baseweb="tab"][aria-selected="true"] {
+    color: #1f4e79 !important;
+}
+[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    border-bottom: 2px solid #dce9f5 !important;
+    gap: 0.25rem !important;
+}
+
+/* ── Button group labels ─────────────────────────────────────────── */
+.button-group-label {
+    font-size: 0.7rem !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.07em !important;
+    color: #7a94a8 !important;
+    margin: 0.9rem 0 0.35rem 0 !important;
+    padding: 0 !important;
+}
+
+/* ── Sidebar step guide ──────────────────────────────────────────── */
+.sidebar-section-title {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #7a94a8 !important;
+    margin: 1rem 0 0.5rem 0;
+}
+.step-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.65rem;
+    padding: 0.45rem 0;
+    border-bottom: 1px solid #e0eaf3;
+}
+.step-number {
+    background: #1f4e79;
+    color: #ffffff !important;
+    min-width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.65rem;
+    font-weight: 800;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+.step-text {
+    font-size: 0.8rem;
+    color: #20364d !important;
+    line-height: 1.45;
+}
+
+/* ── Enhanced metric cards ───────────────────────────────────────── */
+div[data-testid="stMetric"] {
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(47, 117, 181, 0.16);
+    border-top: 3px solid #2e6ca8;
+    border-radius: 12px;
+    padding: 0.85rem 1rem;
+    transition: box-shadow 0.15s ease;
+}
+div[data-testid="stMetric"]:hover {
+    box-shadow: 0 4px 16px rgba(18, 49, 79, 0.1);
+}
+div[data-testid="stMetric"] [data-testid="stMetricLabel"] {
+    font-size: 0.75rem !important;
+    font-weight: 600 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6d8094 !important;
+}
+div[data-testid="stMetric"] [data-testid="stMetricValue"] {
+    font-size: 1.6rem !important;
+    font-weight: 800 !important;
+    color: #12314f !important;
+}
+
+/* ── Enhanced expander ───────────────────────────────────────────── */
+div[data-testid="stExpander"] {
+    background: rgba(255, 255, 255, 0.82);
+    border-radius: 12px;
+    border: 1px solid rgba(47, 117, 181, 0.14) !important;
+    transition: box-shadow 0.15s ease;
+}
+div[data-testid="stExpander"]:hover {
+    box-shadow: 0 2px 12px rgba(18, 49, 79, 0.08);
+}
+div[data-testid="stExpander"] summary {
+    font-weight: 600 !important;
+    color: #1f4e79 !important;
+}
+
+/* ── Container cards ─────────────────────────────────────────────── */
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    border-radius: 14px !important;
+    border: 1px solid rgba(47, 117, 181, 0.16) !important;
+    background: rgba(255, 255, 255, 0.72) !important;
+    transition: box-shadow 0.15s ease;
+}
+div[data-testid="stVerticalBlockBorderWrapper"]:hover {
+    box-shadow: 0 4px 20px rgba(18, 49, 79, 0.1);
+}
+
+/* ── Search input ────────────────────────────────────────────────── */
+[data-testid="stTextInput"] input:focus {
+    border-color: #1f4e79 !important;
+    box-shadow: 0 0 0 3px rgba(31, 78, 121, 0.12) !important;
 }
