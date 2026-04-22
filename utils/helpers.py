@@ -106,7 +106,14 @@ def merge_table_state(base_table: dict, stored_table: dict | None) -> dict:
             }
         merged["schema"] = sorted(merged_schema.values(), key=lambda col: col["column_name"].casefold())
 
-    for section in ["relationships", "data_quality", "pipeline", "target_model", "signoff"]:
+    stored_relationships = deepcopy(stored_table.get("relationships", {}))
+    if stored_relationships:
+        if stored_relationships.get("references"):
+            merged["relationships"]["references"] = stored_relationships["references"]
+        if stored_relationships.get("referenced_by"):
+            merged["relationships"]["referenced_by"] = stored_relationships["referenced_by"]
+
+    for section in ["data_quality", "pipeline", "target_model", "signoff"]:
         merged[section].update(deepcopy(stored_table.get(section, {})))
 
     return merged
