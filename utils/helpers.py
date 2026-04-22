@@ -47,8 +47,8 @@ def build_default_table_state(parsed_table: dict) -> dict:
         "owning_team": "D&IG",
         "schema": deepcopy(parsed_table.get("schema", [])),
         "relationships": {
-            "references": [],
-            "referenced_by": [],
+            "references": deepcopy(parsed_table.get("relationships", {}).get("references", [])),
+            "referenced_by": deepcopy(parsed_table.get("relationships", {}).get("referenced_by", [])),
         },
         "data_quality": {
             "nullable_issues": "",
