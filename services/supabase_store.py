@@ -54,6 +54,16 @@ class SupabaseStore:
         self.config = config
         self.client: Client = create_client(config["url"], config["key"])
 
+    @staticmethod
+    def _coerce_bool(value) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return value.strip().lower() in {"true", "yes", "1"}
+        return bool(value)
+
     def fetch_catalog_state(self) -> dict[str, dict]:
         tables_rows = self.client.table(self.config["tables_table"]).select("*").execute().data or []
         columns_rows = self.client.table(self.config["columns_table"]).select("*").execute().data or []
@@ -124,7 +134,7 @@ class SupabaseStore:
                         "references_table": row.get("references_table", ""),
                         "references_column": row.get("references_column", ""),
                         "cardinality": row.get("cardinality", ""),
-                        "mandatory": row.get("mandatory", ""),
+                        "mandatory": self._coerce_bool(row.get("mandatory")),
                     }
                 )
 
@@ -206,7 +216,7 @@ class SupabaseStore:
                             "references_table": row.get("references_table", ""),
                             "references_column": row.get("references_column", ""),
                             "cardinality": row.get("cardinality", ""),
-                            "mandatory": row.get("mandatory", ""),
+                            "mandatory": self._coerce_bool(row.get("mandatory")),
                         }
                         for row in references
                     ]
