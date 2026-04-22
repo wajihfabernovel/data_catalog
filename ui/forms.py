@@ -70,9 +70,8 @@ def render_relationships_section(table: dict) -> dict:
             "references_table": "References table",
             "references_column": "References column",
             "cardinality": "Cardinality",
-            "mandatory": st.column_config.SelectboxColumn(
+            "mandatory": st.column_config.CheckboxColumn(
                 "Mandatory?",
-                options=["YES", "NO", "UNKNOWN"],
             ),
         },
     )
