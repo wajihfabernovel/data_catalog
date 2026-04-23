@@ -23,13 +23,26 @@ def _select_index(options: list[str], value: str) -> int:
     return 0
 
 
-def render_schema_section(table: dict) -> None:
+def render_schema_section(table: dict) -> list[dict]:
     st.markdown("#### Schema")
     schema_df = pd.DataFrame(table["schema"])
     if schema_df.empty:
-        st.info("No schema columns were parsed for this table.")
-        return
-    st.dataframe(schema_df, use_container_width=True, hide_index=True)
+        schema_df = pd.DataFrame(columns=["column_name", "edm_type", "sql_type"])
+
+    edited_schema = st.data_editor(
+        schema_df,
+        use_container_width=True,
+        hide_index=True,
+        num_rows="dynamic",
+        key=widget_key(table["table_key"], "schema"),
+        column_config={
+            "column_name": "Column name",
+            "edm_type": "Edm type",
+            "sql_type": "SQL type",
+        },
+    )
+
+    return edited_schema.dropna(how="all").to_dict(orient="records")
 
 
 def render_table_context_section(table: dict) -> str:
@@ -318,7 +331,7 @@ def render_signoff_section(table: dict) -> dict:
 def render_table_forms(table: dict) -> dict:
     updated = dict(table)
     updated["owning_team"] = render_table_context_section(table)
-    render_schema_section(table)
+    updated["schema"] = render_schema_section(table)
     updated["relationships"] = render_relationships_section(table)
     updated["data_quality"] = render_data_quality_section(table)
     updated["pipeline"] = render_pipeline_section(table)
