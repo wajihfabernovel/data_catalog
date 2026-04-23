@@ -285,6 +285,15 @@ def render_catalog_section() -> None:
     render_catalog_stats(catalog_tables)
     render_export_section()
 
+    action_cols = st.columns([1.2, 4])
+    if action_cols[0].button("Save all to Supabase", key="catalog_save_all", use_container_width=True):
+        try:
+            get_supabase_store().save_tables(list(st.session_state["catalog_tables"].values()), current_actor_name())
+            refresh_from_database(show_message=False)
+            st.success("All loaded catalog tables saved to Supabase.")
+        except (RuntimeError, SupabaseConfigError) as exc:
+            st.error(str(exc))
+
     search_col, team_col, bucket_col = st.columns([2, 1.4, 1.1])
     search_col.text_input("Search tables", key="search_query", placeholder="Filter by table name...")
     team_col.multiselect(
