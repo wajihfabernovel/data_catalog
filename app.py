@@ -32,6 +32,8 @@ def init_state() -> None:
         "xml_payload": "",
         "table_names_raw": "",
         "search_query": "",
+        "team_filters": [],
+        "column_bucket_filters": [],
         "export_payload": None,
         "export_file_path": None,
         "batch_export_payload": None,
@@ -93,6 +95,16 @@ def refresh_from_database(show_message: bool = False) -> None:
 
 def _has_missing_schema(catalog_tables: dict) -> bool:
     return any(not table.get("schema") for table in catalog_tables.values())
+
+
+def _column_bucket(column_count: int) -> str:
+    if column_count == 0:
+        return "0"
+    if 1 <= column_count <= 10:
+        return "1-10"
+    if 11 <= column_count <= 50:
+        return "11-50"
+    return "50+"
 
 
 def parse_and_sync() -> None:
@@ -273,13 +285,40 @@ def render_catalog_section() -> None:
     render_catalog_stats(catalog_tables)
     render_export_section()
 
-    st.text_input("Search tables", key="search_query", placeholder="Filter by table name...")
+    search_col, team_col, bucket_col = st.columns([2, 1.4, 1.1])
+    search_col.text_input("Search tables", key="search_query", placeholder="Filter by table name...")
+    team_col.multiselect(
+        "Owning team",
+        options=[
+            "D&IG",
+            "Strategy",
+            "S&R",
+            "Modular Innovation",
+            "Analytics",
+            "Integration & Localization",
+        ],
+        key="team_filters",
+        placeholder="All teams",
+    )
+    bucket_col.multiselect(
+        "Columns",
+        options=["0", "1-10", "11-50", "50+"],
+        key="column_bucket_filters",
+        placeholder="All ranges",
+    )
     search_query = st.session_state.get("search_query", "").strip().casefold()
+    team_filters = set(st.session_state.get("team_filters", []))
+    column_bucket_filters = set(st.session_state.get("column_bucket_filters", []))
 
     visible_tables = [
         table
         for table in catalog_tables.values()
-        if not search_query or search_query in table["table_name"].casefold()
+        if (not search_query or search_query in table["table_name"].casefold())
+        and (not team_filters or table.get("owning_team", "D&IG") in team_filters)
+        and (
+            not column_bucket_filters
+            or _column_bucket(len(table.get("schema", []))) in column_bucket_filters
+        )
     ]
     if not visible_tables:
         st.warning("No tables match the current search filter.")
