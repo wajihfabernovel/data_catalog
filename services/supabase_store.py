@@ -54,6 +54,24 @@ class SupabaseStore:
         self.config = config
         self.client: Client = create_client(config["url"], config["key"])
 
+    def _fetch_all_rows(self, table_name: str, page_size: int = 1000) -> list[dict]:
+        rows: list[dict] = []
+        start = 0
+        while True:
+            batch = (
+                self.client.table(table_name)
+                .select("*")
+                .range(start, start + page_size - 1)
+                .execute()
+                .data
+                or []
+            )
+            rows.extend(batch)
+            if len(batch) < page_size:
+                break
+            start += page_size
+        return rows
+
     @staticmethod
     def _coerce_bool(value) -> bool:
         if isinstance(value, bool):
@@ -65,10 +83,10 @@ class SupabaseStore:
         return bool(value)
 
     def fetch_catalog_state(self) -> dict[str, dict]:
-        tables_rows = self.client.table(self.config["tables_table"]).select("*").execute().data or []
-        columns_rows = self.client.table(self.config["columns_table"]).select("*").execute().data or []
-        rel_fk_rows = self.client.table(self.config["rel_fk_table"]).select("*").execute().data or []
-        rel_ref_by_rows = self.client.table(self.config["rel_ref_by_table"]).select("*").execute().data or []
+        tables_rows = self._fetch_all_rows(self.config["tables_table"])
+        columns_rows = self._fetch_all_rows(self.config["columns_table"])
+        rel_fk_rows = self._fetch_all_rows(self.config["rel_fk_table"])
+        rel_ref_by_rows = self._fetch_all_rows(self.config["rel_ref_by_table"])
 
         catalog: dict[str, dict] = {}
         for row in tables_rows:
