@@ -18,6 +18,12 @@ def _iter_children(element: ET.Element, child_name: str) -> list[ET.Element]:
     return [child for child in element if _local_name(child.tag) == child_name]
 
 
+def _include_column(column_name: str) -> bool:
+    if column_name.startswith("_") and not column_name.startswith("_hive_"):
+        return False
+    return True
+
+
 def _extract_relationships(entity: ET.Element, primary_key: str, schema: list[dict]) -> dict:
     guid_columns = {
         column["column_name"]
@@ -76,6 +82,8 @@ def _parse_entity(entity: ET.Element) -> dict:
             continue
 
         column_name = child.attrib.get("Name", "").strip()
+        if not _include_column(column_name):
+            continue
         edm_type = child.attrib.get("Type", "").strip()
         schema.append(
             {
