@@ -74,7 +74,7 @@ def _ensure_editor_state(existing_journeys: list[dict[str, Any]]) -> None:
     st.session_state.setdefault("journey_editor_journey_id", next_journey_id([j["journey_id"] for j in existing_journeys]))
     st.session_state.setdefault("journey_editor_journey_name", "")
     st.session_state.setdefault("journey_editor_module_domain", JOURNEY_MODULE_OPTIONS[0])
-    st.session_state.setdefault("journey_editor_primary_user_role", JOURNEY_ROLE_OPTIONS[0])
+    st.session_state.setdefault("journey_editor_user_roles", [])
     st.session_state.setdefault("journey_editor_frequency", JOURNEY_FREQUENCY_OPTIONS[0])
     st.session_state.setdefault("journey_editor_complexity", JOURNEY_COMPLEXITY_OPTIONS[0])
     st.session_state.setdefault("journey_editor_interview_date", date.today())
@@ -91,7 +91,7 @@ def _reset_editor(existing_journeys: list[dict[str, Any]]) -> None:
     st.session_state["journey_editor_journey_id"] = next_journey_id([j["journey_id"] for j in existing_journeys])
     st.session_state["journey_editor_journey_name"] = ""
     st.session_state["journey_editor_module_domain"] = JOURNEY_MODULE_OPTIONS[0]
-    st.session_state["journey_editor_primary_user_role"] = JOURNEY_ROLE_OPTIONS[0]
+    st.session_state["journey_editor_user_roles"] = []
     st.session_state["journey_editor_frequency"] = JOURNEY_FREQUENCY_OPTIONS[0]
     st.session_state["journey_editor_complexity"] = JOURNEY_COMPLEXITY_OPTIONS[0]
     st.session_state["journey_editor_interview_date"] = date.today()
@@ -106,7 +106,8 @@ def _load_editor(journey: dict[str, Any], existing_journeys: list[dict[str, Any]
     st.session_state["journey_editor_journey_id"] = journey["journey_id"]
     st.session_state["journey_editor_journey_name"] = journey.get("journey_name", "")
     st.session_state["journey_editor_module_domain"] = journey.get("module_domain") or JOURNEY_MODULE_OPTIONS[0]
-    st.session_state["journey_editor_primary_user_role"] = journey.get("primary_user_role") or JOURNEY_ROLE_OPTIONS[0]
+    stored_roles = journey.get("primary_user_role", "")
+    st.session_state["journey_editor_user_roles"] = [role.strip() for role in stored_roles.split(",") if role.strip()]
     st.session_state["journey_editor_frequency"] = journey.get("frequency") or JOURNEY_FREQUENCY_OPTIONS[0]
     st.session_state["journey_editor_complexity"] = journey.get("complexity") or JOURNEY_COMPLEXITY_OPTIONS[0]
     interview_date = journey.get("interview_date")
@@ -196,7 +197,7 @@ def _collect_editor_payload(catalog_tables: dict[str, dict]) -> tuple[dict[str, 
         "journey_id": st.session_state.get("journey_editor_journey_id", "").strip(),
         "journey_name": st.session_state.get("journey_editor_journey_name", "").strip(),
         "module_domain": st.session_state.get("journey_editor_module_domain", "").strip(),
-        "primary_user_role": st.session_state.get("journey_editor_primary_user_role", "").strip(),
+        "primary_user_role": ", ".join(st.session_state.get("journey_editor_user_roles", [])),
         "frequency": st.session_state.get("journey_editor_frequency", "").strip(),
         "complexity": st.session_state.get("journey_editor_complexity", "").strip(),
         "interview_date": st.session_state.get("journey_editor_interview_date").isoformat()
@@ -343,7 +344,7 @@ def _render_capture_page(store: JourneysStore, catalog_tables: dict[str, dict], 
         st.text_input("Journey ID", key="journey_editor_journey_id")
         st.text_input("Journey Name", key="journey_editor_journey_name")
         st.selectbox("Module/Domain", JOURNEY_MODULE_OPTIONS, key="journey_editor_module_domain")
-        st.selectbox("Primary User Role", JOURNEY_ROLE_OPTIONS, key="journey_editor_primary_user_role")
+        st.multiselect("User Role", JOURNEY_ROLE_OPTIONS, key="journey_editor_user_roles")
     with meta_right:
         st.selectbox("Frequency", JOURNEY_FREQUENCY_OPTIONS, key="journey_editor_frequency")
         st.selectbox("Complexity", JOURNEY_COMPLEXITY_OPTIONS, key="journey_editor_complexity")
@@ -458,7 +459,15 @@ def _render_view_page(store: JourneysStore, existing_journeys: list[dict[str, An
     journeys_df = pd.DataFrame(existing_journeys)
     col1, col2, col3, col4 = st.columns(4)
     module_filter = col1.multiselect("Module/Domain", sorted(journeys_df["module_domain"].dropna().unique().tolist()))
-    role_filter = col2.multiselect("Primary User Role", sorted(journeys_df["primary_user_role"].dropna().unique().tolist()))
+    role_options = sorted(
+        {
+            role.strip()
+            for value in journeys_df["primary_user_role"].dropna().tolist()
+            for role in str(value).split(",")
+            if role.strip()
+        }
+    )
+    role_filter = col2.multiselect("User Role", role_options)
     complexity_filter = col3.multiselect("Complexity", sorted(journeys_df["complexity"].dropna().unique().tolist()))
     scrum_filter = col4.multiselect("Scrum Team", sorted(journeys_df["scrum_team"].dropna().unique().tolist()))
 
@@ -466,7 +475,11 @@ def _render_view_page(store: JourneysStore, existing_journeys: list[dict[str, An
     if module_filter:
         filtered_df = filtered_df[filtered_df["module_domain"].isin(module_filter)]
     if role_filter:
-        filtered_df = filtered_df[filtered_df["primary_user_role"].isin(role_filter)]
+        filtered_df = filtered_df[
+            filtered_df["primary_user_role"].fillna("").apply(
+                lambda value: any(role in [item.strip() for item in str(value).split(",") if item.strip()] for role in role_filter)
+            )
+        ]
     if complexity_filter:
         filtered_df = filtered_df[filtered_df["complexity"].isin(complexity_filter)]
     if scrum_filter:
