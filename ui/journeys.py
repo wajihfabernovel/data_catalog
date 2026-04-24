@@ -186,7 +186,7 @@ def _seed_step_widget_defaults(step: dict[str, Any], idx: int) -> None:
             "side_effects",
         ],
     )
-    st.session_state.setdefault(f"{prefix}_transitions", transition_df)
+    st.session_state.setdefault(f"{prefix}_transitions_data", transition_df)
     for table_name, operation in step.get("write_operations", {}).items():
         st.session_state.setdefault(f"{prefix}_write_op_{table_name}", operation)
 
@@ -231,7 +231,7 @@ def _collect_editor_payload(catalog_tables: dict[str, dict]) -> tuple[dict[str, 
         if not user_action:
             errors.append(f"Step {step_number}: User Action is required.")
 
-        transition_rows = st.session_state.get(f"{prefix}_transitions")
+        transition_rows = st.session_state.get(f"{prefix}_transitions_data")
         if isinstance(transition_rows, pd.DataFrame):
             transition_dicts = transition_rows.fillna("").to_dict(orient="records")
         else:
@@ -405,7 +405,7 @@ def _render_capture_page(store: JourneysStore, catalog_tables: dict[str, dict], 
             st.text_area("Business Rules/Logic", key=f"{prefix}_business_rules")
             st.text_area("Notes", key=f"{prefix}_notes")
             st.markdown("**Status transitions**")
-            transitions_df = st.session_state.get(f"{prefix}_transitions")
+            transitions_df = st.session_state.get(f"{prefix}_transitions_data")
             if not isinstance(transitions_df, pd.DataFrame):
                 transitions_df = pd.DataFrame(transitions_df)
             updated_df = st.data_editor(
@@ -413,9 +413,9 @@ def _render_capture_page(store: JourneysStore, catalog_tables: dict[str, dict], 
                 num_rows="dynamic",
                 hide_index=True,
                 use_container_width=True,
-                key=f"{prefix}_transitions",
+                key=f"{prefix}_transitions_editor",
             )
-            st.session_state[f"{prefix}_transitions"] = updated_df
+            st.session_state[f"{prefix}_transitions_data"] = updated_df
             if st.button("Remove step", key=f"{prefix}_remove"):
                 steps.pop(idx)
                 for new_idx, item in enumerate(steps, start=1):
