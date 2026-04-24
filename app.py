@@ -13,6 +13,7 @@ from services.export import build_excel_workbook
 from services.local_store import load_local_catalog_state, save_local_catalog_state
 from services.supabase_store import SupabaseConfigError, SupabaseStore, load_supabase_config
 from ui.cards import render_table_card
+from ui.journeys import render_journey_mapping
 from utils.helpers import build_default_table_state, merge_table_state, normalize_table_names
 
 load_dotenv()
@@ -453,18 +454,26 @@ def main() -> None:
         '</div>'
         '<p class="hero-kicker">A cheerful little metadata command center</p>'
         "<h1>Dataverse Data Catalog</h1>"
-        '<p class="hero-donation">Made with a bit of love. If this catalog saves your day, donations are warmly accepted.</p>'
+        "<p>Collaborative Streamlit cataloging tool for Dataverse metadata, backed by Supabase</p>"
+        '<p class="hero-donation">Made with a bit of love. If this catalog saves your day, imaginary donations are warmly accepted.</p>'
         "</div>",
         unsafe_allow_html=True,
     )
 
-    tab_input, tab_catalog, tab_batch = st.tabs(["Input & Sync", "Catalog", "Batch"])
+    tab_input, tab_catalog, tab_batch, tab_journeys = st.tabs(
+        ["Input & Sync", "Catalog", "Batch", "User Journey Mapping"]
+    )
     with tab_input:
         render_input_section()
     with tab_catalog:
         render_catalog_section()
     with tab_batch:
         render_batch_section()
+    with tab_journeys:
+        render_journey_mapping(
+            st.session_state.get("catalog_tables") or st.session_state.get("database_snapshot", {}),
+            current_actor_name(),
+        )
 
 
 if __name__ == "__main__":
