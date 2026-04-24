@@ -198,6 +198,38 @@ def fetch_dataverse_metadata_and_sync() -> None:
     st.success(f"Fetched Dataverse metadata for {len(fetched_tables)} table(s).")
 
 
+def fetch_all_custom_dataverse_tables_and_sync() -> None:
+    try:
+        fetched_tables = get_dataverse_client().fetch_all_custom_entities()
+    except (RuntimeError, DataverseConfigError, ValueError, OSError) as exc:
+        st.error(str(exc))
+        return
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Dataverse bulk metadata fetch failed: {exc}")
+        return
+
+    snapshot = {}
+    try:
+        snapshot = get_supabase_store().fetch_catalog_state()
+        st.session_state["database_snapshot"] = snapshot
+    except (RuntimeError, SupabaseConfigError):
+        snapshot = {}
+
+    catalog_tables = st.session_state.get("catalog_tables", {})
+    for fetched_table in fetched_tables:
+        default_table = build_default_table_state(fetched_table)
+        stored_table = snapshot.get(fetched_table["table_key"])
+        merged = merge_table_state(default_table, stored_table)
+        merged["metadata_profile"] = fetched_table.get("metadata_profile", merged.get("metadata_profile", {}))
+        merged["relationships"] = fetched_table.get("relationships", merged.get("relationships", {}))
+        merged["schema"] = fetched_table.get("schema", merged.get("schema", []))
+        merged["primary_key"] = fetched_table.get("primary_key", merged.get("primary_key", ""))
+        catalog_tables[fetched_table["table_key"]] = merged
+
+    st.session_state["catalog_tables"] = catalog_tables
+    st.success(f"Fetched all custom Dataverse entities: {len(fetched_tables)} table(s).")
+
+
 def render_input_section() -> None:
     uploaded_file = st.file_uploader("Upload XML metadata", type=["xml"])
     if uploaded_file is not None:
@@ -216,7 +248,7 @@ def render_input_section() -> None:
     )
 
     st.markdown('<p class="button-group-label">Parse &amp; Sync</p>', unsafe_allow_html=True)
-    parse_cols = st.columns([1, 1, 2])
+    parse_cols = st.columns([1, 1, 1, 1])
     if parse_cols[0].button("Parse and sync", use_container_width=True):
         parse_and_sync()
     if parse_cols[1].button("Refresh from Supabase", use_container_width=True):
@@ -226,6 +258,8 @@ def render_input_section() -> None:
             st.error(str(exc))
     if parse_cols[2].button("Fetch Dataverse metadata", use_container_width=True):
         fetch_dataverse_metadata_and_sync()
+    if parse_cols[3].button("Fetch all custom Dataverse tables", use_container_width=True):
+        fetch_all_custom_dataverse_tables_and_sync()
 
     st.markdown('<p class="button-group-label">Save &amp; Load</p>', unsafe_allow_html=True)
     save_cols = st.columns(4)
