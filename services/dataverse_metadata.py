@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
@@ -189,9 +189,26 @@ class DataverseMetadataClient:
                         "IsValidODataAttribute",
                         "IsPrimaryId",
                         "IsPrimaryName",
+                        "IsLogical",
+                        "RequiredLevel",
                         "SourceType",
                     ]
                 )
+            },
+        )
+        return payload.get("value", [])
+
+    def _fetch_all_custom_entities_expanded(self) -> list[dict[str, Any]]:
+        payload = self._get(
+            "EntityDefinitions",
+            params={
+                "$select": "LogicalName,DisplayName,PrimaryIdAttribute",
+                "$expand": (
+                    "Attributes($select="
+                    "LogicalName,DisplayName,AttributeType,AttributeTypeName,IsPrimaryId,"
+                    "IsPrimaryName,IsCustomAttribute,IsValidODataAttribute,IsLogical,RequiredLevel,SourceType)"
+                ),
+                "$filter": "IsCustomEntity eq true",
             },
         )
         return payload.get("value", [])
@@ -224,13 +241,31 @@ class DataverseMetadataClient:
         )
         return {row["LogicalName"]: row for row in payload.get("value", []) if row.get("LogicalName")}
 
-    def fetch_entity_profile(self, table_name: str) -> dict[str, Any]:
-        base_attributes = self._fetch_base_attributes(table_name)
-        lookup_meta = self._fetch_lookup_metadata(table_name)
-        string_meta = self._fetch_string_metadata(table_name)
-        picklist_meta = self._fetch_picklist_metadata(table_name)
-        decimal_meta = self._fetch_decimal_metadata(table_name)
+    @staticmethod
+    def _required_level_label(required_level: Any) -> str:
+        if isinstance(required_level, dict):
+            return str(required_level.get("Value") or "").strip()
+        return str(required_level or "").strip()
 
+    @staticmethod
+    def _display_label(display_name: Any) -> str:
+        if not isinstance(display_name, dict):
+            return ""
+        return str(
+            ((display_name.get("UserLocalizedLabel") or {}).get("Label"))
+            or ""
+        ).strip()
+
+    def _build_entity_profile(
+        self,
+        *,
+        table_name: str,
+        base_attributes: list[dict[str, Any]],
+        lookup_meta: dict[str, dict[str, Any]],
+        string_meta: dict[str, dict[str, Any]],
+        picklist_meta: dict[str, dict[str, Any]],
+        decimal_meta: dict[str, dict[str, Any]],
+    ) -> dict[str, Any]:
         schema: list[dict[str, Any]] = []
         primary_key = ""
         relationships = {"references": [], "referenced_by": []}
@@ -241,6 +276,8 @@ class DataverseMetadataClient:
             attribute_type = self._safe_value(row.get("AttributeType"))
             attribute_type_name = self._safe_value(
                 (row.get("AttributeTypeName") or {}).get("Value")
+                if isinstance(row.get("AttributeTypeName"), dict)
+                else row.get("AttributeTypeName")
             )
             max_length = string_meta.get(logical_name, {}).get("MaxLength")
             precision = decimal_meta.get(logical_name, {}).get("Precision")
@@ -249,11 +286,14 @@ class DataverseMetadataClient:
             )
             attr = {
                 "column_name": logical_name,
+                "display_name": self._display_label(row.get("DisplayName")),
                 "edm_type": attribute_type_name or attribute_type,
                 "attribute_type": attribute_type,
                 "attribute_type_name": attribute_type_name,
                 "is_custom_attribute": bool(row.get("IsCustomAttribute")),
                 "is_valid_odata_attribute": bool(row.get("IsValidODataAttribute")),
+                "is_logical": bool(row.get("IsLogical")),
+                "required_level": self._required_level_label(row.get("RequiredLevel")),
                 "source_type": row.get("SourceType"),
                 "source_type_label": self._source_type_label(row.get("SourceType")),
                 "max_length": max_length if max_length is not None else "",
@@ -286,11 +326,12 @@ class DataverseMetadataClient:
                         "references_table": attr["targets"],
                         "references_column": "",
                         "cardinality": "Many-to-One",
-                        "mandatory": False,
+                        "mandatory": attr["required_level"] in {"SystemRequired", "ApplicationRequired"},
                     }
                 )
 
         target_entity = f"PLM_{table_name.upper()}"
+        lookup_count = counts["Lookup / FK"]
         metadata_profile = {
             "source_mode": "dataverse_api",
             "api_enriched_at": datetime.now(timezone.utc).isoformat(),
@@ -300,7 +341,7 @@ class DataverseMetadataClient:
             "virtual_shadow_columns": counts["Virtual / Shadow"],
             "rollup_fields": counts["Rollup"],
             "formula_fields": counts["Formula"],
-            "lookup_columns": counts["Lookup / FK"],
+            "lookup_columns": lookup_count,
             "multiselect_columns": counts["MultiSelect"],
             "state_machine_candidates": ", ".join(
                 sorted(
@@ -312,10 +353,11 @@ class DataverseMetadataClient:
                 )
             ),
             "recommended_target_entity": target_entity,
-            "migration_priority": "P0 - Critical" if counts["Lookup / FK"] >= 5 else "P1 - High",
+            "centrality_score": "HIGH" if lookup_count >= 10 else "MEDIUM" if lookup_count >= 3 else "LOW",
+            "migration_priority": "P0 - Critical" if lookup_count >= 10 else "P1 - High",
             "notes": (
-                "Central domain aggregate candidate"
-                if counts["Lookup / FK"] >= 5
+                "Central domain aggregate candidate with broad FK dependency graph"
+                if lookup_count >= 10
                 else "Review lookup and computed fields for target modeling"
             ),
         }
@@ -328,6 +370,58 @@ class DataverseMetadataClient:
             "metadata_profile": metadata_profile,
         }
 
+    def fetch_entity_profile(self, table_name: str) -> dict[str, Any]:
+        base_attributes = self._fetch_base_attributes(table_name)
+        lookup_meta = self._fetch_lookup_metadata(table_name)
+        string_meta = self._fetch_string_metadata(table_name)
+        picklist_meta = self._fetch_picklist_metadata(table_name)
+        decimal_meta = self._fetch_decimal_metadata(table_name)
+        return self._build_entity_profile(
+            table_name=table_name,
+            base_attributes=base_attributes,
+            lookup_meta=lookup_meta,
+            string_meta=string_meta,
+            picklist_meta=picklist_meta,
+            decimal_meta=decimal_meta,
+        )
+
     def fetch_entities(self, table_names: list[str]) -> list[dict[str, Any]]:
         normalized = normalize_table_names(",".join(table_names))
         return [self.fetch_entity_profile(name) for name in normalized]
+
+    def fetch_all_custom_entities(self) -> list[dict[str, Any]]:
+        expanded = self._fetch_all_custom_entities_expanded()
+        entities: list[dict[str, Any]] = []
+        referenced_by: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
+        for row in expanded:
+            table_name = self._safe_value(row.get("LogicalName"))
+            if not table_name:
+                continue
+            entity = self._build_entity_profile(
+                table_name=table_name,
+                base_attributes=row.get("Attributes") or [],
+                lookup_meta=self._fetch_lookup_metadata(table_name),
+                string_meta=self._fetch_string_metadata(table_name),
+                picklist_meta=self._fetch_picklist_metadata(table_name),
+                decimal_meta=self._fetch_decimal_metadata(table_name),
+            )
+            entity["display_name"] = self._display_label(row.get("DisplayName")) or table_name
+            entity["primary_key"] = entity.get("primary_key") or self._safe_value(row.get("PrimaryIdAttribute"))
+            for ref in entity["relationships"]["references"]:
+                for target in [item.strip() for item in str(ref.get("references_table", "")).split(",") if item.strip()]:
+                    referenced_by[target].append(
+                        {
+                            "table_name": table_name,
+                            "via_column": ref.get("fk_column", ""),
+                            "cardinality": ref.get("cardinality", "Many-to-One"),
+                        }
+                    )
+            entities.append(entity)
+
+        for entity in entities:
+            entity["relationships"]["referenced_by"] = sorted(
+                referenced_by.get(entity["table_name"], []),
+                key=lambda item: (item.get("table_name", "").casefold(), item.get("via_column", "").casefold()),
+            )
+        return sorted(entities, key=lambda item: item["table_name"].casefold())
