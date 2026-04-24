@@ -21,14 +21,7 @@ TEAM_OPTIONS = [
     "Analytics",
     "Integration & Localization",
 ]
-JOURNEY_MODULE_OPTIONS = [
-    "Product Master",
-    "Formulation",
-    "Packaging",
-    "Regulatory",
-    "Workflow",
-    "Unassigned",
-]
+JOURNEY_MODULE_OPTIONS = ["Strategy", "D&IG", "S&R", "MI", "Analytics"]
 JOURNEY_ROLE_OPTIONS = [
     "Product Manager",
     "R&D Scientist",
