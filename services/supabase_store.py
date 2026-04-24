@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timezone
 
@@ -110,6 +111,7 @@ class SupabaseStore:
                 "owning_team": row.get("owning_team", "D&IG"),
                 "schema": [],
                 "relationships": {"references": [], "referenced_by": []},
+                "metadata_profile": json.loads(row.get("metadata_profile_json") or "{}"),
                 "data_quality": {
                     "nullable_issues": row.get("nullable_issues", ""),
                     "format_inconsistencies": row.get("format_inconsistencies", ""),
@@ -152,6 +154,25 @@ class SupabaseStore:
                         "column_name": row.get("column_name", ""),
                         "edm_type": row.get("edm_type", ""),
                         "sql_type": row.get("sql_type", ""),
+                        "attribute_type": row.get("attribute_type", ""),
+                        "attribute_type_name": row.get("attribute_type_name", ""),
+                        "is_custom_attribute": self._coerce_bool(row.get("is_custom_attribute")),
+                        "is_valid_odata_attribute": self._coerce_bool(row.get("is_valid_odata_attribute")),
+                        "source_type": row.get("source_type", ""),
+                        "source_type_label": row.get("source_type_label", ""),
+                        "max_length": row.get("max_length", ""),
+                        "precision": row.get("precision", ""),
+                        "min_value": row.get("min_value", ""),
+                        "max_value": row.get("max_value", ""),
+                        "targets": row.get("targets", ""),
+                        "option_values": row.get("option_values", ""),
+                        "category": row.get("category", ""),
+                        "modeling_action": row.get("modeling_action", ""),
+                        "is_primary_id": self._coerce_bool(row.get("is_primary_id")),
+                        "is_primary_name": self._coerce_bool(row.get("is_primary_name")),
+                        "is_state_machine_candidate": self._coerce_bool(
+                            row.get("is_state_machine_candidate")
+                        ),
                     }
                 )
 
@@ -190,6 +211,7 @@ class SupabaseStore:
                 "table_name": table["table_name"],
                 "primary_key": table.get("primary_key", ""),
                 "owning_team": table.get("owning_team", "D&IG"),
+                "metadata_profile_json": json.dumps(table.get("metadata_profile", {})),
                 "nullable_issues": table["data_quality"]["nullable_issues"],
                 "format_inconsistencies": table["data_quality"]["format_inconsistencies"],
                 "duplicate_records": table["data_quality"]["duplicate_records"],
@@ -229,6 +251,29 @@ class SupabaseStore:
                             "column_name": col["column_name"],
                             "edm_type": col["edm_type"],
                             "sql_type": col["sql_type"],
+                            "attribute_type": col.get("attribute_type", ""),
+                            "attribute_type_name": col.get("attribute_type_name", ""),
+                            "is_custom_attribute": self._coerce_bool(
+                                col.get("is_custom_attribute")
+                            ),
+                            "is_valid_odata_attribute": self._coerce_bool(
+                                col.get("is_valid_odata_attribute")
+                            ),
+                            "source_type": col.get("source_type") or None,
+                            "source_type_label": col.get("source_type_label", ""),
+                            "max_length": col.get("max_length") or None,
+                            "precision": col.get("precision") or None,
+                            "min_value": col.get("min_value", ""),
+                            "max_value": col.get("max_value", ""),
+                            "targets": col.get("targets", ""),
+                            "option_values": col.get("option_values", ""),
+                            "category": col.get("category", ""),
+                            "modeling_action": col.get("modeling_action", ""),
+                            "is_primary_id": self._coerce_bool(col.get("is_primary_id")),
+                            "is_primary_name": self._coerce_bool(col.get("is_primary_name")),
+                            "is_state_machine_candidate": self._coerce_bool(
+                                col.get("is_state_machine_candidate")
+                            ),
                         }
                         for col in table["schema"]
                     ]
