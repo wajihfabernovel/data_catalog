@@ -241,6 +241,43 @@ class DataverseMetadataClient:
         )
         return {row["LogicalName"]: row for row in payload.get("value", []) if row.get("LogicalName")}
 
+    def _fetch_one_to_many_relationships(self) -> list[dict[str, Any]]:
+        payload = self._get(
+            "RelationshipDefinitions/Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata",
+            params={
+                "$select": ",".join(
+                    [
+                        "SchemaName",
+                        "ReferencedEntity",
+                        "ReferencedAttribute",
+                        "ReferencingEntity",
+                        "ReferencingAttribute",
+                        "ReferencingEntityNavigationPropertyName",
+                        "ReferencedEntityNavigationPropertyName",
+                    ]
+                )
+            },
+        )
+        return payload.get("value", [])
+
+    def _fetch_many_to_many_relationships(self) -> list[dict[str, Any]]:
+        payload = self._get(
+            "RelationshipDefinitions/Microsoft.Dynamics.CRM.ManyToManyRelationshipMetadata",
+            params={
+                "$select": ",".join(
+                    [
+                        "SchemaName",
+                        "Entity1LogicalName",
+                        "Entity1IntersectAttribute",
+                        "Entity2LogicalName",
+                        "Entity2IntersectAttribute",
+                        "IntersectEntityName",
+                    ]
+                )
+            },
+        )
+        return payload.get("value", [])
+
     @staticmethod
     def _required_level_label(required_level: Any) -> str:
         if isinstance(required_level, dict):
@@ -392,7 +429,15 @@ class DataverseMetadataClient:
     def fetch_all_custom_entities(self) -> list[dict[str, Any]]:
         expanded = self._fetch_all_custom_entities_expanded()
         entities: list[dict[str, Any]] = []
+        entity_names = {
+            self._safe_value(row.get("LogicalName"))
+            for row in expanded
+            if self._safe_value(row.get("LogicalName"))
+        }
         referenced_by: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        many_to_many_by_entity: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        one_to_many_rows = self._fetch_one_to_many_relationships()
+        many_to_many_rows = self._fetch_many_to_many_relationships()
 
         for row in expanded:
             table_name = self._safe_value(row.get("LogicalName"))
@@ -408,20 +453,78 @@ class DataverseMetadataClient:
             )
             entity["display_name"] = self._display_label(row.get("DisplayName")) or table_name
             entity["primary_key"] = entity.get("primary_key") or self._safe_value(row.get("PrimaryIdAttribute"))
-            for ref in entity["relationships"]["references"]:
-                for target in [item.strip() for item in str(ref.get("references_table", "")).split(",") if item.strip()]:
-                    referenced_by[target].append(
-                        {
-                            "table_name": table_name,
-                            "via_column": ref.get("fk_column", ""),
-                            "cardinality": ref.get("cardinality", "Many-to-One"),
-                        }
-                    )
             entities.append(entity)
+
+        entities_by_name = {entity["table_name"]: entity for entity in entities}
+
+        for row in one_to_many_rows:
+            referenced = self._safe_value(row.get("ReferencedEntity"))
+            referencing = self._safe_value(row.get("ReferencingEntity"))
+            if referenced not in entity_names and referencing not in entity_names:
+                continue
+            if referencing in entities_by_name:
+                entities_by_name[referencing]["relationships"]["references"].append(
+                    {
+                        "fk_column": self._safe_value(row.get("ReferencingAttribute")),
+                        "references_table": referenced,
+                        "references_column": self._safe_value(row.get("ReferencedAttribute")),
+                        "cardinality": "Many-to-One",
+                        "mandatory": False,
+                    }
+                )
+            if referenced in entity_names:
+                referenced_by[referenced].append(
+                    {
+                        "table_name": referencing,
+                        "via_column": self._safe_value(row.get("ReferencingAttribute")),
+                        "cardinality": "One-to-Many",
+                    }
+                )
+
+        for row in many_to_many_rows:
+            entity1 = self._safe_value(row.get("Entity1LogicalName"))
+            entity2 = self._safe_value(row.get("Entity2LogicalName"))
+            if entity1 not in entity_names and entity2 not in entity_names:
+                continue
+            entry = {
+                "schema_name": self._safe_value(row.get("SchemaName")),
+                "entity1": entity1,
+                "entity2": entity2,
+                "intersect_entity_name": self._safe_value(row.get("IntersectEntityName")),
+                "entity1_intersect_attribute": self._safe_value(row.get("Entity1IntersectAttribute")),
+                "entity2_intersect_attribute": self._safe_value(row.get("Entity2IntersectAttribute")),
+            }
+            if entity1 in entity_names:
+                many_to_many_by_entity[entity1].append(entry)
+            if entity2 in entity_names:
+                many_to_many_by_entity[entity2].append(entry)
 
         for entity in entities:
             entity["relationships"]["referenced_by"] = sorted(
                 referenced_by.get(entity["table_name"], []),
                 key=lambda item: (item.get("table_name", "").casefold(), item.get("via_column", "").casefold()),
             )
+            # Deduplicate relationship references after merging inferred and official metadata.
+            seen_refs: set[tuple[str, str, str]] = set()
+            deduped_refs = []
+            for ref in entity["relationships"]["references"]:
+                key = (
+                    self._safe_value(ref.get("fk_column")),
+                    self._safe_value(ref.get("references_table")),
+                    self._safe_value(ref.get("references_column")),
+                )
+                if key in seen_refs:
+                    continue
+                seen_refs.add(key)
+                deduped_refs.append(ref)
+            entity["relationships"]["references"] = sorted(
+                deduped_refs,
+                key=lambda item: (
+                    self._safe_value(item.get("references_table")).casefold(),
+                    self._safe_value(item.get("fk_column")).casefold(),
+                ),
+            )
+            entity["metadata_profile"]["incoming_relationships"] = len(entity["relationships"]["referenced_by"])
+            entity["metadata_profile"]["outgoing_relationships"] = len(entity["relationships"]["references"])
+            entity["metadata_profile"]["many_to_many"] = many_to_many_by_entity.get(entity["table_name"], [])
         return sorted(entities, key=lambda item: item["table_name"].casefold())
