@@ -9,6 +9,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from parser.xml_parser import parse_dataverse_xml
+from services.dataverse_metadata import DataverseConfigError, DataverseMetadataClient, load_dataverse_config
 from services.export import build_excel_workbook
 from services.local_store import load_local_catalog_state, save_local_catalog_state
 from services.supabase_store import SupabaseConfigError, SupabaseStore, load_supabase_config
@@ -52,6 +53,10 @@ def current_actor_name() -> str:
     return "supabase_app"
 
 
+def get_dataverse_client() -> DataverseMetadataClient:
+    return DataverseMetadataClient()
+
+
 @st.cache_data(show_spinner=False)
 def cached_parse(xml_payload: str, table_names_csv: str) -> list[dict]:
     requested_tables = normalize_table_names(table_names_csv)
@@ -68,6 +73,16 @@ def render_connection_section() -> None:
         return
     st.success("Supabase backend configured.")
     st.caption(f"Project: `{config['url']}`")
+
+    dv_config = load_dataverse_config()
+    if dv_config["missing"]:
+        st.info(
+            "Dataverse metadata fetch is not configured yet. Missing: "
+            + ", ".join(dv_config["missing"])
+        )
+    else:
+        st.success("Dataverse metadata fetch configured.")
+        st.caption(f"Base URL: `{dv_config['base_url']}`")
 
 
 def refresh_from_database(show_message: bool = False) -> None:
@@ -140,6 +155,49 @@ def parse_and_sync() -> None:
     st.success(f"Loaded {len(parsed_tables)} table(s) into the catalog workspace.")
 
 
+def fetch_dataverse_metadata_and_sync() -> None:
+    requested_tables = normalize_table_names(st.session_state.get("table_names_raw", ""))
+    if not requested_tables:
+        requested_tables = [
+            table["table_name"]
+            for table in st.session_state.get("catalog_tables", {}).values()
+            if table.get("table_name")
+        ]
+    if not requested_tables:
+        st.error("Provide at least one table name or load catalog tables before fetching Dataverse metadata.")
+        return
+
+    try:
+        fetched_tables = get_dataverse_client().fetch_entities(requested_tables)
+    except (RuntimeError, DataverseConfigError, ValueError, OSError) as exc:
+        st.error(str(exc))
+        return
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Dataverse metadata fetch failed: {exc}")
+        return
+
+    snapshot = {}
+    try:
+        snapshot = get_supabase_store().fetch_catalog_state()
+        st.session_state["database_snapshot"] = snapshot
+    except (RuntimeError, SupabaseConfigError):
+        snapshot = {}
+
+    catalog_tables = st.session_state.get("catalog_tables", {})
+    for fetched_table in fetched_tables:
+        default_table = build_default_table_state(fetched_table)
+        stored_table = snapshot.get(fetched_table["table_key"])
+        merged = merge_table_state(default_table, stored_table)
+        merged["metadata_profile"] = fetched_table.get("metadata_profile", merged.get("metadata_profile", {}))
+        merged["relationships"] = fetched_table.get("relationships", merged.get("relationships", {}))
+        merged["schema"] = fetched_table.get("schema", merged.get("schema", []))
+        merged["primary_key"] = fetched_table.get("primary_key", merged.get("primary_key", ""))
+        catalog_tables[fetched_table["table_key"]] = merged
+
+    st.session_state["catalog_tables"] = catalog_tables
+    st.success(f"Fetched Dataverse metadata for {len(fetched_tables)} table(s).")
+
+
 def render_input_section() -> None:
     uploaded_file = st.file_uploader("Upload XML metadata", type=["xml"])
     if uploaded_file is not None:
@@ -166,6 +224,8 @@ def render_input_section() -> None:
             refresh_from_database(show_message=True)
         except (RuntimeError, SupabaseConfigError) as exc:
             st.error(str(exc))
+    if parse_cols[2].button("Fetch Dataverse metadata", use_container_width=True):
+        fetch_dataverse_metadata_and_sync()
 
     st.markdown('<p class="button-group-label">Save &amp; Load</p>', unsafe_allow_html=True)
     save_cols = st.columns(4)
@@ -454,7 +514,8 @@ def main() -> None:
         '</div>'
         '<p class="hero-kicker">A cheerful little metadata command center</p>'
         "<h1>Dataverse Data Catalog</h1>"
-        '<p class="hero-donation">Made with a bit of love. If this catalog saves your day, donations are warmly accepted.</p>'
+        "<p>Collaborative Streamlit cataloging tool for Dataverse metadata, backed by Supabase</p>"
+        '<p class="hero-donation">Made with a bit of love. If this catalog saves your day, imaginary donations are warmly accepted.</p>'
         "</div>",
         unsafe_allow_html=True,
     )
