@@ -531,6 +531,107 @@ def render_batch_section() -> None:
             st.caption(f"Local path: `{st.session_state['batch_export_path']}`")
 
 
+def _relationship_dot(visible_tables: dict[str, dict]) -> str:
+    lines = [
+        "digraph relationships {",
+        '  rankdir="LR";',
+        '  node [shape=box, style="rounded,filled", fillcolor="#f7f7f7"];',
+    ]
+    edges: set[tuple[str, str, str]] = set()
+    many_to_many_edges: set[tuple[str, str, str]] = set()
+    for table_name, table in visible_tables.items():
+        lines.append(f'  "{table_name}";')
+        for ref in table.get("relationships", {}).get("references", []):
+            target = str(ref.get("references_table", "")).strip()
+            fk = str(ref.get("fk_column", "")).strip()
+            if target and target in visible_tables and target != table_name:
+                edges.add((table_name, target, fk))
+        for rel in table.get("metadata_profile", {}).get("many_to_many", []):
+            entity1 = str(rel.get("entity1", "")).strip()
+            entity2 = str(rel.get("entity2", "")).strip()
+            schema_name = str(rel.get("schema_name", "")).strip()
+            if entity1 in visible_tables and entity2 in visible_tables and entity1 != entity2:
+                ordered = tuple(sorted([entity1, entity2]))
+                many_to_many_edges.add((ordered[0], ordered[1], schema_name))
+    for source, target, fk in sorted(edges):
+        label = fk or "FK"
+        lines.append(f'  "{source}" -> "{target}" [label="{label}", color="#3b82f6"];')
+    for entity1, entity2, schema_name in sorted(many_to_many_edges):
+        label = schema_name or "M:N"
+        lines.append(
+            f'  "{entity1}" -> "{entity2}" [dir=both, arrowhead=none, arrowtail=none, style=dashed, color="#ef4444", label="{label}"];'
+        )
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def render_relationships_section() -> None:
+    catalog_tables = st.session_state.get("catalog_tables", {})
+    if not catalog_tables:
+        st.info("No catalog data is loaded yet. Fetch Dataverse metadata first.")
+        return
+
+    st.markdown("### Relationships")
+    table_names = sorted(catalog_tables.keys(), key=lambda k: catalog_tables[k]["table_name"].casefold())
+    selected_keys = st.multiselect(
+        "Select tables to visualize",
+        options=table_names,
+        format_func=lambda key: catalog_tables[key]["table_name"],
+        default=table_names[: min(25, len(table_names))],
+    )
+    if not selected_keys:
+        st.caption("Select at least one table.")
+        return
+
+    visible_tables = {
+        catalog_tables[key]["table_name"]: catalog_tables[key]
+        for key in selected_keys
+    }
+    st.graphviz_chart(_relationship_dot(visible_tables), use_container_width=True)
+
+    relationship_rows = []
+    many_to_many_rows = []
+    for table in visible_tables.values():
+        for ref in table.get("relationships", {}).get("references", []):
+            target = str(ref.get("references_table", "")).strip()
+            if target in visible_tables:
+                relationship_rows.append(
+                    {
+                        "source_table": table["table_name"],
+                        "source_column": ref.get("fk_column", ""),
+                        "target_table": target,
+                        "target_column": ref.get("references_column", ""),
+                        "relationship_type": ref.get("cardinality", "Many-to-One"),
+                    }
+                )
+        for rel in table.get("metadata_profile", {}).get("many_to_many", []):
+            entity1 = str(rel.get("entity1", "")).strip()
+            entity2 = str(rel.get("entity2", "")).strip()
+            if entity1 in visible_tables and entity2 in visible_tables:
+                many_to_many_rows.append(
+                    {
+                        "entity1": entity1,
+                        "entity2": entity2,
+                        "schema_name": rel.get("schema_name", ""),
+                        "intersect_entity_name": rel.get("intersect_entity_name", ""),
+                    }
+                )
+    if relationship_rows:
+        st.markdown("#### One-to-Many / Many-to-One")
+        st.dataframe(relationship_rows, use_container_width=True, hide_index=True)
+    if many_to_many_rows:
+        deduped = []
+        seen = set()
+        for row in many_to_many_rows:
+            key = tuple(sorted([row["entity1"], row["entity2"]]) + [row["schema_name"]])
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(row)
+        st.markdown("#### Many-to-Many")
+        st.dataframe(deduped, use_container_width=True, hide_index=True)
+
+
 def main() -> None:
     st.set_page_config(page_title="Dataverse Data Catalog", layout="wide")
     load_styles()
@@ -554,13 +655,15 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    tab_input, tab_catalog, tab_batch, tab_journeys = st.tabs(
-        ["Input & Sync", "Catalog", "Batch", "User Journey Mapping"]
+    tab_input, tab_catalog, tab_relationships, tab_batch, tab_journeys = st.tabs(
+        ["Input & Sync", "Catalog", "Relationships", "Batch", "User Journey Mapping"]
     )
     with tab_input:
         render_input_section()
     with tab_catalog:
         render_catalog_section()
+    with tab_relationships:
+        render_relationships_section()
     with tab_batch:
         render_batch_section()
     with tab_journeys:
