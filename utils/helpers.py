@@ -21,6 +21,26 @@ TEAM_OPTIONS = [
     "Analytics",
     "Integration & Localization",
 ]
+JOURNEY_MODULE_OPTIONS = [
+    "Product Master",
+    "Formulation",
+    "Packaging",
+    "Regulatory",
+    "Workflow",
+    "Unassigned",
+]
+JOURNEY_ROLE_OPTIONS = [
+    "Product Manager",
+    "R&D Scientist",
+    "R&D Manager",
+    "Packaging Engineer",
+    "Regulatory Specialist",
+    "Product Admin",
+    "Admin",
+]
+JOURNEY_FREQUENCY_OPTIONS = ["Daily", "Weekly", "Monthly", "Ad-hoc"]
+JOURNEY_COMPLEXITY_OPTIONS = ["Low", "Medium", "High"]
+JOURNEY_WRITE_OPERATIONS = ["INSERT", "UPDATE", "DELETE", "UPSERT"]
 
 
 def normalize_table_names(raw_value: str) -> list[str]:
@@ -148,3 +168,34 @@ def sanitize_sheet_name(name: str) -> str:
     sanitized = "".join("_" if char in invalid else char for char in name)
     sanitized = sanitized.strip() or "Sheet"
     return sanitized[:31]
+
+
+def next_journey_id(existing_ids: list[str]) -> str:
+    highest = 0
+    for journey_id in existing_ids:
+        if not journey_id or not journey_id.startswith("J"):
+            continue
+        suffix = journey_id[1:]
+        if suffix.isdigit():
+            highest = max(highest, int(suffix))
+    return f"J{highest + 1:03d}"
+
+
+def normalize_free_text_tables(raw_value: str) -> list[str]:
+    return [item.strip() for item in raw_value.split(",") if item.strip()]
+
+
+def classify_access_pattern(read_count: int, write_count: int) -> str:
+    if read_count > write_count * 2:
+        return "Read-Heavy"
+    if write_count > read_count:
+        return "Write-Heavy"
+    return "Balanced"
+
+
+def classify_centrality(journey_count: int) -> str:
+    if journey_count >= 5:
+        return "HIGH"
+    if journey_count >= 2:
+        return "MEDIUM"
+    return "LOW"
