@@ -26,6 +26,14 @@ def load_supabase_config() -> dict:
     rel_ref_by_table = os.getenv(
         "SUPABASE_REL_REF_BY_TABLE", "catalog_relationships_referenced_by"
     ).strip()
+    journeys_table = os.getenv("SUPABASE_JOURNEYS_TABLE", "journeys").strip()
+    journey_steps_table = os.getenv("SUPABASE_JOURNEY_STEPS_TABLE", "journey_steps").strip()
+    journey_step_tables_table = os.getenv(
+        "SUPABASE_JOURNEY_STEP_TABLES_TABLE", "journey_step_tables"
+    ).strip()
+    state_transitions_table = os.getenv(
+        "SUPABASE_STATE_TRANSITIONS_TABLE", "state_transitions"
+    ).strip()
 
     missing = []
     if not url:
@@ -40,6 +48,10 @@ def load_supabase_config() -> dict:
         "columns_table": columns_table,
         "rel_fk_table": rel_fk_table,
         "rel_ref_by_table": rel_ref_by_table,
+        "journeys_table": journeys_table,
+        "journey_steps_table": journey_steps_table,
+        "journey_step_tables_table": journey_step_tables_table,
+        "state_transitions_table": state_transitions_table,
         "missing": missing,
     }
 
