@@ -25,9 +25,24 @@ def _select_index(options: list[str], value: str) -> int:
 
 def render_schema_section(table: dict) -> list[dict]:
     st.markdown("#### Schema")
+    existing_schema = table.get("schema", [])
     schema_df = pd.DataFrame(table["schema"])
     if schema_df.empty:
-        schema_df = pd.DataFrame(columns=["column_name", "edm_type", "sql_type"])
+        schema_df = pd.DataFrame(
+            columns=[
+                "column_name",
+                "edm_type",
+                "attribute_type",
+                "sql_type",
+                "category",
+                "modeling_action",
+                "max_length",
+                "precision",
+                "targets",
+                "option_values",
+                "is_state_machine_candidate",
+            ]
+        )
 
     edited_schema = st.data_editor(
         schema_df,
@@ -38,11 +53,81 @@ def render_schema_section(table: dict) -> list[dict]:
         column_config={
             "column_name": "Column name",
             "edm_type": "Edm type",
+            "attribute_type": "Attribute type",
             "sql_type": "SQL type",
+            "category": "Category",
+            "modeling_action": "Modeling action",
+            "max_length": "Max length",
+            "precision": "Precision",
+            "targets": "Targets",
+            "option_values": "Option values",
+            "is_state_machine_candidate": st.column_config.CheckboxColumn(
+                "State machine?"
+            ),
         },
     )
 
-    return edited_schema.dropna(how="all").to_dict(orient="records")
+    cleaned_rows = edited_schema.dropna(how="all").to_dict(orient="records")
+
+    # Guard against transient empty editor payloads on rerun. Without this,
+    # an unchanged parsed schema can occasionally be overwritten with [] on save.
+    if existing_schema and not cleaned_rows:
+        return existing_schema
+
+    return cleaned_rows
+
+
+def render_dataverse_profile_section(table: dict) -> dict:
+    st.markdown("#### Dataverse Profile")
+    profile = dict(table.get("metadata_profile", {}))
+    if not profile:
+        st.info("No Dataverse API enrichment loaded for this table yet.")
+        return {}
+
+    metric_cols = st.columns(4)
+    metric_cols[0].metric("Attributes", profile.get("total_attributes", 0))
+    metric_cols[1].metric("Custom business", profile.get("custom_business_columns", 0))
+    metric_cols[2].metric("Rollup + formula", int(profile.get("rollup_fields", 0)) + int(profile.get("formula_fields", 0)))
+    metric_cols[3].metric("Lookups", profile.get("lookup_columns", 0))
+
+    st.text_input(
+        "Recommended target entity",
+        value=profile.get("recommended_target_entity", ""),
+        key=widget_key(table["table_key"], "profile_recommended_target_entity"),
+    )
+    st.text_input(
+        "Migration priority",
+        value=profile.get("migration_priority", ""),
+        key=widget_key(table["table_key"], "profile_migration_priority"),
+    )
+    st.text_area(
+        "State machine candidates",
+        value=profile.get("state_machine_candidates", ""),
+        key=widget_key(table["table_key"], "profile_state_machine_candidates"),
+    )
+    st.text_area(
+        "Profile notes",
+        value=profile.get("notes", ""),
+        key=widget_key(table["table_key"], "profile_notes"),
+    )
+
+    profile["recommended_target_entity"] = st.session_state.get(
+        widget_key(table["table_key"], "profile_recommended_target_entity"),
+        profile.get("recommended_target_entity", ""),
+    )
+    profile["migration_priority"] = st.session_state.get(
+        widget_key(table["table_key"], "profile_migration_priority"),
+        profile.get("migration_priority", ""),
+    )
+    profile["state_machine_candidates"] = st.session_state.get(
+        widget_key(table["table_key"], "profile_state_machine_candidates"),
+        profile.get("state_machine_candidates", ""),
+    )
+    profile["notes"] = st.session_state.get(
+        widget_key(table["table_key"], "profile_notes"),
+        profile.get("notes", ""),
+    )
+    return profile
 
 
 def render_table_context_section(table: dict) -> str:
@@ -331,6 +416,7 @@ def render_signoff_section(table: dict) -> dict:
 def render_table_forms(table: dict) -> dict:
     updated = dict(table)
     updated["owning_team"] = render_table_context_section(table)
+    updated["metadata_profile"] = render_dataverse_profile_section(table)
     updated["schema"] = render_schema_section(table)
     updated["relationships"] = render_relationships_section(table)
     updated["data_quality"] = render_data_quality_section(table)
