@@ -45,7 +45,7 @@ def render_table_card(
     team_badge = _badge(table.get("owning_team", "D&IG"), "badge-team")
 
     with st.container(border=True):
-        summary_cols = st.columns([3, 1, 1])
+        summary_cols = st.columns([3, 1, 1, 1])
         summary_cols[0].markdown(
             f"### {table['table_name']} {signoff_badge} {quality_badge} {team_badge}",
             unsafe_allow_html=True,
@@ -53,6 +53,30 @@ def render_table_card(
         pk = table.get("primary_key") or "N/A"
         summary_cols[1].metric("Primary key", pk)
         summary_cols[2].metric("Columns", len(table.get("schema", [])))
+        summary_cols[3].metric(
+            "State fields",
+            len(
+                [
+                    column
+                    for column in table.get("schema", [])
+                    if column.get("is_state_machine_candidate")
+                ]
+            ),
+        )
+
+        profile = table.get("metadata_profile", {})
+        if profile:
+            st.caption(
+                " | ".join(
+                    [
+                        f"Custom business: {profile.get('custom_business_columns', 0)}",
+                        f"Rollup: {profile.get('rollup_fields', 0)}",
+                        f"Formula: {profile.get('formula_fields', 0)}",
+                        f"Lookups: {profile.get('lookup_columns', 0)}",
+                        f"Target: {profile.get('recommended_target_entity', '') or 'N/A'}",
+                    ]
+                )
+            )
 
         with st.expander("Open metadata sections", expanded=False):
             updated = render_table_forms(table)
