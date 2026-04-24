@@ -79,7 +79,6 @@ def _ensure_editor_state(existing_journeys: list[dict[str, Any]]) -> None:
     st.session_state.setdefault("journey_editor_complexity", JOURNEY_COMPLEXITY_OPTIONS[0])
     st.session_state.setdefault("journey_editor_interview_date", date.today())
     st.session_state.setdefault("journey_editor_interviewer", "Wajih")
-    st.session_state.setdefault("journey_editor_scrum_team", "")
     st.session_state.setdefault("journey_editor_steps", [_blank_step(1)])
 
 
@@ -96,7 +95,6 @@ def _reset_editor(existing_journeys: list[dict[str, Any]]) -> None:
     st.session_state["journey_editor_complexity"] = JOURNEY_COMPLEXITY_OPTIONS[0]
     st.session_state["journey_editor_interview_date"] = date.today()
     st.session_state["journey_editor_interviewer"] = "Wajih"
-    st.session_state["journey_editor_scrum_team"] = ""
     st.session_state["journey_editor_steps"] = [_blank_step(1)]
 
 
@@ -113,7 +111,6 @@ def _load_editor(journey: dict[str, Any], existing_journeys: list[dict[str, Any]
     interview_date = journey.get("interview_date")
     st.session_state["journey_editor_interview_date"] = date.fromisoformat(interview_date) if interview_date else date.today()
     st.session_state["journey_editor_interviewer"] = journey.get("interviewer", "Wajih")
-    st.session_state["journey_editor_scrum_team"] = journey.get("scrum_team", "")
 
     steps_payload: list[dict[str, Any]] = []
     for step in sorted(journey.get("steps", []), key=lambda item: item["step_number"]):
@@ -204,7 +201,7 @@ def _collect_editor_payload(catalog_tables: dict[str, dict]) -> tuple[dict[str, 
         if st.session_state.get("journey_editor_interview_date")
         else "",
         "interviewer": st.session_state.get("journey_editor_interviewer", "").strip(),
-        "scrum_team": st.session_state.get("journey_editor_scrum_team", "").strip(),
+        "scrum_team": "",
     }
     errors: list[str] = []
     steps: list[dict[str, Any]] = []
@@ -350,7 +347,6 @@ def _render_capture_page(store: JourneysStore, catalog_tables: dict[str, dict], 
         st.selectbox("Complexity", JOURNEY_COMPLEXITY_OPTIONS, key="journey_editor_complexity")
         st.date_input("Interview Date", key="journey_editor_interview_date")
         st.text_input("Interviewer", key="journey_editor_interviewer")
-        st.text_input("Scrum Team", key="journey_editor_scrum_team")
 
     st.divider()
     st.markdown("### Journey Steps")
@@ -457,7 +453,7 @@ def _render_view_page(store: JourneysStore, existing_journeys: list[dict[str, An
         return
 
     journeys_df = pd.DataFrame(existing_journeys)
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     module_filter = col1.multiselect("Module/Domain", sorted(journeys_df["module_domain"].dropna().unique().tolist()))
     role_options = sorted(
         {
@@ -469,7 +465,6 @@ def _render_view_page(store: JourneysStore, existing_journeys: list[dict[str, An
     )
     role_filter = col2.multiselect("User Role", role_options)
     complexity_filter = col3.multiselect("Complexity", sorted(journeys_df["complexity"].dropna().unique().tolist()))
-    scrum_filter = col4.multiselect("Scrum Team", sorted(journeys_df["scrum_team"].dropna().unique().tolist()))
 
     filtered_df = journeys_df.copy()
     if module_filter:
@@ -482,8 +477,6 @@ def _render_view_page(store: JourneysStore, existing_journeys: list[dict[str, An
         ]
     if complexity_filter:
         filtered_df = filtered_df[filtered_df["complexity"].isin(complexity_filter)]
-    if scrum_filter:
-        filtered_df = filtered_df[filtered_df["scrum_team"].isin(scrum_filter)]
 
     st.dataframe(
         filtered_df[
