@@ -63,6 +63,7 @@ def build_default_table_state(parsed_table: dict) -> dict:
             "references": deepcopy(parsed_table.get("relationships", {}).get("references", [])),
             "referenced_by": deepcopy(parsed_table.get("relationships", {}).get("referenced_by", [])),
         },
+        "metadata_profile": deepcopy(parsed_table.get("metadata_profile", {})),
         "data_quality": {
             "nullable_issues": "",
             "format_inconsistencies": "",
@@ -125,6 +126,9 @@ def merge_table_state(base_table: dict, stored_table: dict | None) -> dict:
             merged["relationships"]["references"] = stored_relationships["references"]
         if stored_relationships.get("referenced_by"):
             merged["relationships"]["referenced_by"] = stored_relationships["referenced_by"]
+
+    if stored_table.get("metadata_profile"):
+        merged["metadata_profile"] = deepcopy(stored_table["metadata_profile"])
 
     for section in ["data_quality", "pipeline", "target_model", "signoff"]:
         merged[section].update(deepcopy(stored_table.get(section, {})))
