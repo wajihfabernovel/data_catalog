@@ -1,7 +1,8 @@
-"""API Discovery tab — fetches Dataverse attribute metadata for all catalog tables."""
+"""API Discovery tab — wraps DataverseMetadataClient with a UI for progress, overrides, and merge."""
 
 from __future__ import annotations
 
+import contextlib
 import os
 from datetime import datetime, timezone
 from typing import Callable
@@ -9,395 +10,465 @@ from typing import Callable
 import pandas as pd
 import streamlit as st
 
-from services.dataverse_api import (
-    fetch_entity_metadata,
-    obtain_token_client_credentials,
-    obtain_token_from_env,
-)
+from services.dataverse_metadata import DataverseConfigError, DataverseMetadataClient, load_dataverse_config
 from utils.helpers import build_default_table_state
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Category normalisation  (DataverseMetadataClient → CSS badge keys)
 # ---------------------------------------------------------------------------
 
+_CATEGORY_NORMALIZE: dict[str, str] = {
+    "Custom Business": "BUSINESS",
+    "Primary Key": "BUSINESS",
+    "System": "SYSTEM",
+    "Virtual / Shadow": "SHADOW",
+    "Rollup": "ROLLUP",
+    "Formula": "FORMULA",
+    "Lookup / FK": "LOOKUP",
+    "MultiSelect": "LOOKUP",
+}
+
 _STAT_LABELS = [
-    ("total", "Total attrs"),
+    ("total",    "Total attrs"),
     ("business", "Business"),
-    ("system", "System"),
-    ("shadow", "Shadow"),
-    ("rollup", "Rollup"),
-    ("formula", "Formula"),
-    ("lookup", "FK / Lookup"),
+    ("system",   "System"),
+    ("shadow",   "Shadow"),
+    ("rollup",   "Rollup"),
+    ("formula",  "Formula"),
+    ("lookup",   "FK / Lookup"),
 ]
 
 
-def _init_api_state() -> None:
-    st.session_state.setdefault("api_results", {})
-    st.session_state.setdefault("api_base_url", os.getenv("DATAVERSE_BASE_URL", "").strip())
-    st.session_state.setdefault("api_version", "v9.2")
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-
-def _resolve_token(base_url: str, manual_token: str, tenant: str, client_id: str, client_secret: str) -> tuple[str, str | None]:
-    """Return (token, error_message). Priority: manual > override creds > env creds."""
-    if manual_token.strip():
-        return manual_token.strip(), None
-
-    if tenant.strip() and client_id.strip() and client_secret.strip():
-        try:
-            return obtain_token_client_credentials(tenant.strip(), client_id.strip(), client_secret.strip(), base_url), None
-        except Exception as exc:
-            return "", f"Token acquisition failed: {exc}"
-
+@contextlib.contextmanager
+def _env_override(**kwargs: str):
+    """Temporarily patch os.environ for the duration of the block."""
+    saved = {}
+    for key, val in kwargs.items():
+        if val:
+            saved[key] = os.environ.get(key)
+            os.environ[key] = val
     try:
-        token = obtain_token_from_env(base_url)
-        if token:
-            return token, None
-    except Exception as exc:
-        return "", f"Env token acquisition failed: {exc}"
+        yield
+    finally:
+        for key, original in saved.items():
+            if original is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = original
 
-    return "", "No bearer token found. Provide one above or configure Azure credentials in .env"
+
+def _build_client(**env_overrides: str) -> DataverseMetadataClient:
+    with _env_override(**env_overrides):
+        return DataverseMetadataClient()
 
 
-def _merge_result_into_catalog(result: dict, catalog_tables: dict) -> dict:
-    """Merge API-fetched attribute data into an existing (or new) catalog entry."""
-    tkey = result["table_key"]
-    attributes: list[dict] = result.get("attributes", [])
+def _extract_picklist_options(schema: list[dict]) -> list[dict]:
+    """Convert the formatted option_values strings on state-machine columns into structured dicts."""
+    result = []
+    for col in schema:
+        if not col.get("is_state_machine_candidate"):
+            continue
+        raw = (col.get("option_values") or "").strip()
+        if not raw:
+            continue
+        options = []
+        for part in raw.split(";"):
+            part = part.strip()
+            if "=" in part:
+                val, label = part.split("=", 1)
+                options.append(
+                    {"value": val.strip(), "label": label.strip(), "color": ""})
+            elif part:
+                options.append({"value": part, "label": "", "color": ""})
+        if options:
+            result.append(
+                {"logical_name": col["column_name"], "options": options})
+    return result
 
-    if tkey in catalog_tables:
-        base = dict(catalog_tables[tkey])
-    else:
-        base = build_default_table_state(
-            {
-                "table_key": tkey,
-                "table_name": result["table_name"],
-                "primary_key": result.get("primary_key", ""),
-                "schema": [],
-            }
-        )
 
-    if result.get("primary_key") and not base.get("primary_key"):
-        base["primary_key"] = result["primary_key"]
+def _merge_profile_into_catalog(profile: dict, catalog_tables: dict) -> dict:
+    """Merge a DataverseMetadataClient entity profile into the catalog table entry."""
+    tkey = profile["table_key"]
+    api_schema: list[dict] = profile.get("schema", [])
+    meta_profile: dict = profile.get("metadata_profile", {})
 
-    # Build a name-indexed map of existing schema columns (from XML parse)
+    base = dict(catalog_tables[tkey]) if tkey in catalog_tables else build_default_table_state(
+        {
+            "table_key": tkey,
+            "table_name": profile["table_name"],
+            "primary_key": profile.get("primary_key", ""),
+            "schema": [],
+        }
+    )
+
+    if profile.get("primary_key") and not base.get("primary_key"):
+        base["primary_key"] = profile["primary_key"]
+
+    # Enrich existing schema columns; add API-only columns
     existing_by_name: dict[str, dict] = {
         col["column_name"]: dict(col) for col in base.get("schema", [])
     }
-
-    # Enrich existing columns and add any new ones from the API response
-    for attr in attributes:
+    for attr in api_schema:
         name = attr["column_name"]
         enrichment = {
-            "attribute_type": attr["attribute_type"],
-            "source_type": attr["source_type"],
-            "column_category": attr["column_category"],
-            "lookup_target": attr["lookup_target"],
-            "is_custom": attr["is_custom"],
-            "is_valid_odata": attr["is_valid_odata"],
-            "max_length": attr.get("max_length"),
-            "precision": attr.get("precision"),
+            "attribute_type": attr.get("attribute_type", ""),
+            "source_type": attr.get("source_type_label", ""),
+            "column_category": _CATEGORY_NORMALIZE.get(attr.get("category", ""), "SYSTEM"),
+            "lookup_target": attr.get("targets", ""),
+            "is_custom": bool(attr.get("is_custom_attribute", False)),
+            "is_valid_odata": bool(attr.get("is_valid_odata_attribute", True)),
+            "max_length": attr.get("max_length") or None,
+            "precision": attr.get("precision") or None,
+            "option_values": attr.get("option_values", ""),
+            "is_state_machine_candidate": bool(attr.get("is_state_machine_candidate", False)),
+            "modeling_action": attr.get("modeling_action", ""),
+            "sql_type": attr.get("sql_type", ""),
         }
         if name in existing_by_name:
             existing_by_name[name].update(enrichment)
-            # Prefer the precisely resolved sql_type from the API
-            if attr["sql_type"]:
-                existing_by_name[name]["sql_type"] = attr["sql_type"]
         else:
             existing_by_name[name] = {
                 "column_name": name,
-                "edm_type": "",
-                "sql_type": attr["sql_type"],
+                "edm_type": attr.get("edm_type", ""),
                 **enrichment,
             }
 
-    base["schema"] = sorted(
-        existing_by_name.values(), key=lambda c: c["column_name"].casefold()
-    )
+    base["schema"] = sorted(existing_by_name.values(),
+                            key=lambda c: c["column_name"].casefold())
+    base["relationships"] = profile.get(
+        "relationships", base.get("relationships", {}))
+    base["metadata_profile"] = meta_profile
+
+    # Normalised dataverse_meta consumed by cards and forms
     base["dataverse_meta"] = {
-        "stats": result.get("stats", {}),
-        "picklist_options": result.get("picklist_options", []),
-        "fetched_at": result.get("fetched_at", datetime.now(timezone.utc).isoformat()),
+        "stats": {
+            "total":    meta_profile.get("total_attributes", len(api_schema)),
+            "business": meta_profile.get("custom_business_columns", 0),
+            "system":   meta_profile.get("system_columns", 0),
+            "shadow":   meta_profile.get("virtual_shadow_columns", 0),
+            "rollup":   meta_profile.get("rollup_fields", 0),
+            "formula":  meta_profile.get("formula_fields", 0),
+            "lookup":   meta_profile.get("lookup_columns", 0),
+        },
+        "picklist_options": _extract_picklist_options(api_schema),
+        "fetched_at": meta_profile.get("api_enriched_at", datetime.now(timezone.utc).isoformat()),
     }
     return base
+
+
+# ---------------------------------------------------------------------------
+# Per-table result panel
+# ---------------------------------------------------------------------------
+
+def _render_result(result: dict) -> None:
+    if result.get("error"):
+        st.error(f"Fetch error: {result['error']}")
+        return
+
+    meta = result.get("metadata_profile", {})
+    api_schema: list[dict] = result.get("schema", [])
+
+    # ── Stats row ──────────────────────────────────────────────────────────
+    stats = {
+        "total":    meta.get("total_attributes", len(api_schema)),
+        "business": meta.get("custom_business_columns", 0),
+        "system":   meta.get("system_columns", 0),
+        "shadow":   meta.get("virtual_shadow_columns", 0),
+        "rollup":   meta.get("rollup_fields", 0),
+        "formula":  meta.get("formula_fields", 0),
+        "lookup":   meta.get("lookup_columns", 0),
+    }
+    cols = st.columns(len(_STAT_LABELS))
+    for col, (key, label) in zip(cols, _STAT_LABELS):
+        col.metric(label, stats[key])
+
+    # ── Profile summary ───────────────────────────────────────────────────
+    centrality = meta.get("centrality_score", "")
+    priority = meta.get("migration_priority", "")
+    target = meta.get("recommended_target_entity", "")
+    if any([centrality, priority, target]):
+        st.caption(
+            " · ".join(filter(None, [
+                f"Centrality: **{centrality}**" if centrality else "",
+                f"Priority: **{priority}**" if priority else "",
+                f"Target entity: `{target}`" if target else "",
+            ]))
+        )
+
+    # ── State-machine candidates ──────────────────────────────────────────
+    state_cols = [c for c in api_schema if c.get(
+        "is_state_machine_candidate") and c.get("option_values")]
+    if state_cols:
+        with st.expander("State-machine columns (picklist option values)", expanded=False):
+            for col in state_cols:
+                st.markdown(
+                    f"- **`{col['column_name']}`**: {col['option_values']}")
+
+    # ── FK dependencies ───────────────────────────────────────────────────
+    fk_cols = [c for c in api_schema if c.get("category") == "Lookup / FK"]
+    if fk_cols:
+        with st.expander(f"FK dependencies ({len(fk_cols)} Lookup columns)", expanded=False):
+            st.dataframe(
+                pd.DataFrame([
+                    {"column": c["column_name"], "target_entity": c.get(
+                        "targets", ""), "sql_type": c.get("sql_type", "")}
+                    for c in fk_cols
+                ]),
+                use_container_width=True, hide_index=True,
+            )
+
+    # ── Computed columns ──────────────────────────────────────────────────
+    computed = [c for c in api_schema if c.get(
+        "category") in ("Rollup", "Formula")]
+    if computed:
+        with st.expander(f"Computed → dbt ({len(computed)} not persisted in Azure SQL)", expanded=False):
+            st.dataframe(
+                pd.DataFrame([
+                    {"column": c["column_name"], "category": c.get(
+                        "category", ""), "type": c.get("attribute_type", "")}
+                    for c in computed
+                ]),
+                use_container_width=True, hide_index=True,
+            )
+
+    # ── M:N relationships (only available from fetch_all_custom_entities) ─
+    mn = meta.get("many_to_many", [])
+    if mn:
+        with st.expander(f"Many-to-Many relationships ({len(mn)})", expanded=False):
+            st.dataframe(pd.DataFrame(
+                mn), use_container_width=True, hide_index=True)
+
+    # ── Shadow columns ────────────────────────────────────────────────────
+    shadow = [c for c in api_schema if c.get("category") == "Virtual / Shadow"]
+    if shadow:
+        names = ", ".join(f"`{c['column_name']}`" for c in shadow[:30])
+        if len(shadow) > 30:
+            names += f" … and {len(shadow) - 30} more"
+        st.caption(
+            f"Shadow / virtual columns to drop ({len(shadow)}): {names}")
 
 
 # ---------------------------------------------------------------------------
 # Public renderer
 # ---------------------------------------------------------------------------
 
-
 def render_api_discovery(
     catalog_tables: dict,
     on_merge: Callable[[dict], None],
 ) -> None:
-    """Render the API Metadata Discovery tab."""
-    _init_api_state()
-
     st.markdown("### Dataverse API Metadata Discovery")
     st.caption(
-        "Loops over your loaded tables and calls the Dataverse Web API to fetch "
-        "full attribute metadata — base attrs, string lengths, picklist option values, "
-        "and decimal precision — then merges the enriched data into your catalog schema."
+        "Uses **DataverseMetadataClient** — 5 API calls per table "
+        "(base attrs · lookup targets · string lengths · picklist options · decimal precision) "
+        "plus the global relationship graph when fetching all custom tables."
     )
 
     # ── Connection settings ──────────────────────────────────────────────────
+    dv_config = load_dataverse_config()
+    env_configured = not dv_config["missing"]
+
     with st.expander(
-        "Connection settings",
-        expanded=not bool(st.session_state.get("api_results")),
+        "Connection settings" +
+            (" ✓ configured from .env" if env_configured else " ⚠ incomplete .env"),
+        expanded=not env_configured,
     ):
-        url_col, ver_col = st.columns([4, 1])
-        base_url = url_col.text_input(
-            "Dataverse base URL",
-            value=st.session_state["api_base_url"],
-            placeholder="https://your-org.api.crm4.dynamics.com",
-            key="api_base_url_input",
-        )
-        api_version = ver_col.text_input(
-            "API version",
-            value=st.session_state["api_version"],
-            key="api_version_input",
-        )
+        if env_configured:
+            st.success(
+                f"Using `{dv_config['base_url']}` · auth mode: `{dv_config['auth_mode']}`")
 
-        manual_token = st.text_input(
-            "Bearer token (optional — leave blank to use Azure credentials from .env)",
-            type="password",
-            key="api_manual_token",
-            help="Paste an access token, or configure AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET in your .env file.",
-        )
+        st.caption("Override any value below (leave blank to use .env):")
+        c1, c2, c3 = st.columns(3)
+        ov_tenant = c1.text_input("Tenant ID",     value="", key="api_ov_tenant",
+                                  placeholder=dv_config.get("tenant_id", "from .env"))
+        ov_client_id = c2.text_input("Client ID",     value="", key="api_ov_client_id",
+                                     placeholder=dv_config.get("client_id", "from .env"))
+        ov_secret = c3.text_input(
+            "Client secret", value="", key="api_ov_secret", type="password")
+        ov_base_url = st.text_input("Base URL",      value="", key="api_ov_base_url",
+                                    placeholder=dv_config.get("base_url", "from .env"))
 
-        st.caption("Override Azure credentials (leave blank to read from .env):")
-        cred1, cred2, cred3 = st.columns(3)
-        override_tenant = cred1.text_input(
-            "Tenant ID",
-            value="",
-            key="api_tenant_override",
-            placeholder=os.getenv("AZURE_TENANT_ID", "from .env"),
-        )
-        override_client_id = cred2.text_input(
-            "Client ID",
-            value="",
-            key="api_client_id_override",
-            placeholder=os.getenv("AZURE_CLIENT_ID", "from .env"),
-        )
-        override_secret = cred3.text_input(
-            "Client secret",
-            type="password",
-            value="",
-            key="api_secret_override",
-        )
+    def _get_client() -> DataverseMetadataClient:
+        overrides = {
+            k: v for k, v in {
+                "AZURE_TENANT_ID":    ov_tenant,
+                "AZURE_CLIENT_ID":    ov_client_id,
+                "AZURE_CLIENT_SECRET": ov_secret,
+                "DATAVERSE_BASE_URL": ov_base_url,
+            }.items() if v.strip()
+        }
+        return _build_client(**overrides)
 
-    # ── Table selection ──────────────────────────────────────────────────────
-    if not catalog_tables:
-        st.info("No tables loaded yet. Parse XML metadata or refresh from Supabase first, then come back here.")
-        return
+    # ── Fetch mode ───────────────────────────────────────────────────────────
+    st.session_state.setdefault("api_results", {})
+    api_results: dict = st.session_state["api_results"]
 
-    st.markdown('<p class="button-group-label">Tables to fetch</p>', unsafe_allow_html=True)
-    sorted_keys = sorted(
-        catalog_tables.keys(), key=lambda k: catalog_tables[k]["table_name"].casefold()
+    fetch_mode = st.radio(
+        "Fetch mode",
+        ["Selected tables (from catalog)",
+         "All custom Dataverse tables (auto-discover)"],
+        horizontal=True,
+        key="api_fetch_mode",
     )
-    display_names = {k: catalog_tables[k]["table_name"] for k in sorted_keys}
+    fetch_all = fetch_mode.startswith("All")
 
-    selected_keys: list[str] = st.multiselect(
-        "Select tables",
-        options=sorted_keys,
-        format_func=lambda k: display_names[k],
-        default=sorted_keys,
-        placeholder="Choose one or more tables…",
-        key="api_selected_keys",
-    )
+    selected_keys: list[str] = []
+    if not fetch_all:
+        if not catalog_tables:
+            st.info(
+                "No tables loaded yet. Parse XML metadata or refresh from Supabase first.")
+            return
+        sorted_keys = sorted(
+            catalog_tables, key=lambda k: catalog_tables[k]["table_name"].casefold())
+        display_names = {k: catalog_tables[k]
+                         ["table_name"] for k in sorted_keys}
+        selected_keys = st.multiselect(
+            "Select tables",
+            options=sorted_keys,
+            format_func=lambda k: display_names[k],
+            default=sorted_keys,
+            key="api_selected_keys",
+        )
+        st.caption(
+            f"{len(selected_keys)} of {len(sorted_keys)} tables selected.")
+    else:
+        st.info(
+            "Will call `EntityDefinitions?$filter=IsCustomEntity eq true` "
+            "and fetch the full relationship graph (1:N + M:N) in one pass."
+        )
 
-    api_results: dict = st.session_state.get("api_results", {})
-    fetched_keys = [k for k in selected_keys if k in api_results and not api_results[k].get("error")]
-    error_keys = [k for k in selected_keys if k in api_results and api_results[k].get("error")]
+    # ── Action buttons ───────────────────────────────────────────────────────
+    st.markdown('<p class="button-group-label">Actions</p>',
+                unsafe_allow_html=True)
+    b1, b2, b3 = st.columns(3)
 
-    st.caption(
-        f"{len(selected_keys)} selected · {len(fetched_keys)} fetched · {len(error_keys)} errors"
-    )
+    fetched_keys = [k for k in (selected_keys or list(
+        api_results)) if k in api_results and not api_results[k].get("error")]
 
-    # ── Action buttons ────────────────────────────────────────────────────────
-    st.markdown('<p class="button-group-label">Actions</p>', unsafe_allow_html=True)
-    a1, a2, a3 = st.columns([1, 1, 1])
-
-    run_fetch = a1.button(
+    run_fetch = b1.button(
         "Fetch from API",
         use_container_width=True,
-        disabled=not selected_keys,
-        key="api_fetch_btn",
+        disabled=(not fetch_all and not selected_keys),
+        key="api_btn_fetch",
     )
-    run_merge = a2.button(
-        f"Merge {len(fetched_keys)} table(s) into catalog",
+    run_merge = b2.button(
+        f"Merge {len(fetched_keys)} table(s) into catalog" if fetched_keys else "Merge into catalog",
         use_container_width=True,
         disabled=not fetched_keys,
-        key="api_merge_btn",
+        key="api_btn_merge",
     )
-    run_clear = a3.button(
+    run_clear = b3.button(
         "Clear results",
         use_container_width=True,
         disabled=not api_results,
-        key="api_clear_btn",
+        key="api_btn_clear",
     )
 
-    # ── Fetch loop ────────────────────────────────────────────────────────────
+    # ── Fetch ────────────────────────────────────────────────────────────────
     if run_fetch:
-        _base = (base_url or st.session_state["api_base_url"]).strip()
-        _ver = (api_version or "v9.2").strip()
-
-        if not _base:
-            st.error("Enter a Dataverse base URL before fetching.")
+        try:
+            client = _get_client()
+        except DataverseConfigError as exc:
+            st.error(f"Dataverse not configured: {exc}")
             st.stop()
 
-        token, token_err = _resolve_token(
-            _base,
-            manual_token,
-            override_tenant,
-            override_client_id,
-            override_secret,
-        )
-        if token_err:
-            st.error(token_err)
-            st.stop()
+        results: dict = {}
 
-        results: dict = dict(st.session_state.get("api_results", {}))
-        with st.status(
-            f"Fetching metadata for {len(selected_keys)} table(s)…", expanded=True
-        ) as fetch_status:
-            for idx, tkey in enumerate(selected_keys, 1):
-                tname = display_names[tkey]
-                st.write(f"[{idx}/{len(selected_keys)}] `{tname}`")
-                result = fetch_entity_metadata(_base, _ver, tname, token)
-                results[tkey] = result
+        if fetch_all:
+            with st.status("Fetching all custom Dataverse tables…", expanded=True) as s:
+                st.write(
+                    "Calling `EntityDefinitions?$filter=IsCustomEntity eq true` + relationship graph…")
+                try:
+                    profiles = client.fetch_all_custom_entities()
+                    for p in profiles:
+                        results[p["table_key"]] = p
+                    s.update(
+                        label=f"Done — {len(profiles)} custom tables fetched.", state="complete")
+                except Exception as exc:
+                    s.update(label="Fetch failed", state="error")
+                    st.error(str(exc))
+                    st.stop()
+        else:
+            table_names = [catalog_tables[k]["table_name"]
+                           for k in selected_keys]
+            with st.status(f"Fetching {len(table_names)} table(s)…", expanded=True) as s:
+                failed = 0
+                for idx, (tkey, tname) in enumerate(zip(selected_keys, table_names), 1):
+                    st.write(f"[{idx}/{len(table_names)}] `{tname}`")
+                    try:
+                        profile = client.fetch_entity_profile(tname)
+                        results[tkey] = profile
+                        mp = profile.get("metadata_profile", {})
+                        st.write(
+                            f"  {mp.get('total_attributes', 0)} attrs · "
+                            f"{mp.get('custom_business_columns', 0)} business · "
+                            f"{mp.get('rollup_fields', 0)} rollup · "
+                            f"{mp.get('lookup_columns', 0)} FK · "
+                            f"centrality {mp.get('centrality_score', '?')}"
+                        )
+                    except Exception as exc:
+                        results[tkey] = {"table_key": tkey,
+                                         "table_name": tname, "error": str(exc)}
+                        st.write(f"  ERROR: {exc}")
+                        failed += 1
 
-                if result.get("error"):
-                    st.write(f"  **Error:** {result['error']}")
-                else:
-                    s = result["stats"]
-                    st.write(
-                        f"  {s['total']} attrs · {s['business']} business "
-                        f"· {s['rollup']} rollup · {s['formula']} formula "
-                        f"· {s['lookup']} FK"
-                    )
-
-            ok = sum(1 for r in results.values() if not r.get("error"))
-            err = len(results) - ok
-            fetch_status.update(
-                label=f"Done — {ok} succeeded, {err} errors.",
-                state="complete" if err == 0 else "error",
-            )
+                state = "complete" if failed == 0 else "error"
+                s.update(
+                    label=f"Done — {len(table_names) - failed} OK, {failed} errors.", state=state)
 
         st.session_state["api_results"] = results
         st.rerun()
 
-    # ── Merge action ──────────────────────────────────────────────────────────
+    # ── Merge ────────────────────────────────────────────────────────────────
     if run_merge:
         updated = dict(st.session_state.get("catalog_tables", {}))
+        merged_count = 0
         for tkey in fetched_keys:
-            updated[tkey] = _merge_result_into_catalog(api_results[tkey], updated)
+            profile = api_results[tkey]
+            if profile.get("error"):
+                continue
+            updated[tkey] = _merge_profile_into_catalog(profile, updated)
+            merged_count += 1
         on_merge(updated)
         st.success(
-            f"Merged {len(fetched_keys)} table(s) into the catalog. "
-            "Schema columns now carry Dataverse attribute types, source types, "
-            "column categories, FK targets, and resolved SQL types."
+            f"Merged {merged_count} table(s) into the catalog. "
+            "Schema columns now carry attribute types, source types, column categories, "
+            "FK targets, precise SQL types, and centrality scores."
         )
 
-    # ── Clear action ──────────────────────────────────────────────────────────
+    # ── Clear ────────────────────────────────────────────────────────────────
     if run_clear:
         st.session_state["api_results"] = {}
         st.rerun()
 
-    # ── Results summary ───────────────────────────────────────────────────────
+    # ── Results ──────────────────────────────────────────────────────────────
     if not api_results:
         return
 
     st.divider()
     st.markdown("#### Fetch Results")
 
-    total_ok = sum(1 for r in api_results.values() if not r.get("error"))
-    total_err = len(api_results) - total_ok
-    total_attrs = sum(r.get("stats", {}).get("total", 0) for r in api_results.values())
-
+    ok = sum(1 for r in api_results.values() if not r.get("error"))
+    err = len(api_results) - ok
+    total_attrs = sum(
+        r.get("metadata_profile", {}).get("total_attributes", 0)
+        for r in api_results.values()
+        if not r.get("error")
+    )
     m1, m2, m3 = st.columns(3)
-    m1.metric("Tables OK", total_ok)
-    m2.metric("Errors", total_err)
+    m1.metric("Tables OK", ok)
+    m2.metric("Errors", err)
     m3.metric("Total attributes", total_attrs)
 
     st.divider()
-
-    visible_keys = set(selected_keys) & set(api_results.keys())
-    for tkey in sorted(visible_keys, key=lambda k: api_results[k]["table_name"].casefold()):
+    visible = set(selected_keys) & set(
+        api_results) if not fetch_all else set(api_results)
+    for tkey in sorted(visible, key=lambda k: api_results[k].get("table_name", k).casefold()):
         result = api_results[tkey]
-        status_icon = "" if result.get("error") else ""
-        with st.expander(f"{status_icon} `{result['table_name']}`", expanded=False):
-            if result.get("error"):
-                st.error(f"Fetch error: {result['error']}")
-                continue
-
-            stats = result.get("stats", {})
-            stat_cols = st.columns(len(_STAT_LABELS))
-            for col, (key, label) in zip(stat_cols, _STAT_LABELS):
-                col.metric(label, stats.get(key, 0))
-
-            # ── Picklist / state machine columns ──────────────────────────
-            pl_options = [p for p in result.get("picklist_options", []) if p.get("options")]
-            if pl_options:
-                st.markdown("**State-machine columns (Picklist option values)**")
-                for pl in pl_options:
-                    opts_md = " · ".join(
-                        f"`{o['value']}` {o['label']}" for o in pl["options"] if o.get("label")
-                    )
-                    st.markdown(f"- **`{pl['logical_name']}`**: {opts_md or '(no labels)'}")
-
-            # ── FK dependency graph ────────────────────────────────────────
-            fk_attrs = [
-                a for a in result.get("attributes", [])
-                if a["column_category"] == "LOOKUP"
-            ]
-            if fk_attrs:
-                st.markdown("**FK dependencies (Lookup columns)**")
-                st.dataframe(
-                    pd.DataFrame(
-                        [
-                            {
-                                "column": a["column_name"],
-                                "target_entity": a["lookup_target"],
-                                "sql_type": a["sql_type"],
-                            }
-                            for a in fk_attrs
-                        ]
-                    ),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-
-            # ── Computed columns to skip in Azure SQL ─────────────────────
-            computed = [
-                a for a in result.get("attributes", [])
-                if a["column_category"] in ("ROLLUP", "FORMULA")
-            ]
-            if computed:
-                st.markdown("**Computed columns → dbt metrics (not persisted in Azure SQL)**")
-                st.dataframe(
-                    pd.DataFrame(
-                        [
-                            {
-                                "column": a["column_name"],
-                                "category": a["column_category"],
-                                "attribute_type": a["attribute_type"],
-                            }
-                            for a in computed
-                        ]
-                    ),
-                    use_container_width=True,
-                    hide_index=True,
-                )
-
-            # ── Shadow columns to drop ────────────────────────────────────
-            shadow = [
-                a for a in result.get("attributes", [])
-                if a["column_category"] == "SHADOW"
-            ]
-            if shadow:
-                st.markdown(f"**Shadow columns to drop** ({len(shadow)} total)")
-                shadow_names = ", ".join(f"`{a['column_name']}`" for a in shadow[:20])
-                if len(shadow) > 20:
-                    shadow_names += f" … and {len(shadow) - 20} more"
-                st.caption(shadow_names)
+        icon = "" if result.get("error") else ""
+        with st.expander(f"{icon} `{result.get('table_name', tkey)}`", expanded=False):
+            _render_result(result)
