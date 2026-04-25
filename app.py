@@ -222,10 +222,7 @@ def fetch_all_custom_dataverse_tables_and_sync() -> None:
     status = st.status("Fetching all custom Dataverse tables...", expanded=True)
     try:
         status.write("Loading custom entity definitions with expanded attributes.")
-        fetched_tables = [
-            t for t in get_dataverse_client().fetch_all_custom_entities()
-            if t.get("table_name", "").startswith(TABLE_PREFIX)
-        ]
+        fetched_tables = get_dataverse_client().fetch_all_custom_entities(name_prefix=TABLE_PREFIX)
         status.write(f"Fetched and enriched {len(fetched_tables)} custom tables (prefix: '{TABLE_PREFIX}').")
     except (RuntimeError, DataverseConfigError, ValueError, OSError) as exc:
         status.update(label="Dataverse bulk metadata fetch failed", state="error")
@@ -493,7 +490,9 @@ def render_sidebar_help() -> None:
         ]
         for num, text in steps:
             st.markdown(
-                f'<div class="step-item"><div class="step-number">{num}</div><div class="step-text">{text}</div></div>',
+                f'<div class="step-item">'
+                f'<div class="step-number">{num}</div>'
+                f'<div class="step-text">{text}</div></div>',
                 unsafe_allow_html=True,
             )
 
@@ -604,7 +603,8 @@ def _relationship_dot(visible_tables: dict[str, dict]) -> str:
     for entity1, entity2, schema_name in sorted(many_to_many_edges):
         label = schema_name or "M:N"
         lines.append(
-            f'  "{entity1}" -> "{entity2}" [dir=both, arrowhead=none, arrowtail=none, style=dashed, color="#ef4444", label="{label}"];'
+            f'  "{entity1}" -> "{entity2}" '
+            f'[dir=both, arrowhead=none, arrowtail=none, style=dashed, color="#ef4444", label="{label}"];'
         )
     lines.append("}")
     return "\n".join(lines)
@@ -803,13 +803,16 @@ def main() -> None:
         '<p class="hero-kicker">A cheerful little metadata command center</p>'
         "<h1>Dataverse Data Catalog</h1>"
         "<p>Collaborative Streamlit cataloging tool for Dataverse metadata, backed by Supabase</p>"
-        '<p class="hero-donation">Made with a bit of love. If this catalog saves your day, imaginary donations are warmly accepted.</p>'
+        '<p class="hero-donation">'
+        'Made with a bit of love. If this catalog saves your day, imaginary donations are warmly accepted.'
+        '</p>'
         "</div>",
         unsafe_allow_html=True,
     )
 
     tab_input, tab_api, tab_catalog, tab_relationships, tab_modeling, tab_batch, tab_journeys = st.tabs(
-        ["Input & Sync", "API Discovery", "Catalog", "Relationships", "Modeling Summary", "Batch", "User Journey Mapping"]
+        ["Input & Sync", "API Discovery", "Catalog", "Relationships",
+         "Modeling Summary", "Batch", "User Journey Mapping"]
     )
     with tab_input:
         render_input_section()
