@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -167,12 +168,17 @@ def fetch_dataverse_metadata_and_sync() -> None:
         st.error("Provide at least one table name or load catalog tables before fetching Dataverse metadata.")
         return
 
+    status = st.status("Fetching Dataverse metadata for selected tables...", expanded=True)
     try:
+        status.write(f"Tables requested: {len(requested_tables)}")
         fetched_tables = get_dataverse_client().fetch_entities(requested_tables)
+        status.write(f"Fetched metadata for {len(fetched_tables)} tables.")
     except (RuntimeError, DataverseConfigError, ValueError, OSError) as exc:
+        status.update(label="Dataverse metadata fetch failed", state="error")
         st.error(str(exc))
         return
     except Exception as exc:  # noqa: BLE001
+        status.update(label="Dataverse metadata fetch failed", state="error")
         st.error(f"Dataverse metadata fetch failed: {exc}")
         return
 
@@ -195,16 +201,22 @@ def fetch_dataverse_metadata_and_sync() -> None:
         catalog_tables[fetched_table["table_key"]] = merged
 
     st.session_state["catalog_tables"] = catalog_tables
+    status.update(label="Dataverse metadata fetch complete", state="complete")
     st.success(f"Fetched Dataverse metadata for {len(fetched_tables)} table(s).")
 
 
 def fetch_all_custom_dataverse_tables_and_sync() -> None:
+    status = st.status("Fetching all custom Dataverse tables...", expanded=True)
     try:
+        status.write("Loading custom entity definitions with expanded attributes.")
         fetched_tables = get_dataverse_client().fetch_all_custom_entities()
+        status.write(f"Fetched and enriched {len(fetched_tables)} custom tables.")
     except (RuntimeError, DataverseConfigError, ValueError, OSError) as exc:
+        status.update(label="Dataverse bulk metadata fetch failed", state="error")
         st.error(str(exc))
         return
     except Exception as exc:  # noqa: BLE001
+        status.update(label="Dataverse bulk metadata fetch failed", state="error")
         st.error(f"Dataverse bulk metadata fetch failed: {exc}")
         return
 
@@ -227,6 +239,7 @@ def fetch_all_custom_dataverse_tables_and_sync() -> None:
         catalog_tables[fetched_table["table_key"]] = merged
 
     st.session_state["catalog_tables"] = catalog_tables
+    status.update(label="Dataverse bulk metadata fetch complete", state="complete")
     st.success(f"Fetched all custom Dataverse entities: {len(fetched_tables)} table(s).")
 
 
@@ -618,7 +631,14 @@ def render_relationships_section() -> None:
                 )
     if relationship_rows:
         st.markdown("#### One-to-Many / Many-to-One")
-        st.dataframe(relationship_rows, use_container_width=True, hide_index=True)
+        rel_df = pd.DataFrame(relationship_rows).drop_duplicates()
+        st.dataframe(rel_df, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Download relationship edges CSV",
+            data=rel_df.to_csv(index=False).encode("utf-8"),
+            file_name="dataverse_relationship_edges.csv",
+            mime="text/csv",
+        )
     if many_to_many_rows:
         deduped = []
         seen = set()
@@ -628,8 +648,98 @@ def render_relationships_section() -> None:
                 continue
             seen.add(key)
             deduped.append(row)
+        mn_df = pd.DataFrame(deduped)
         st.markdown("#### Many-to-Many")
-        st.dataframe(deduped, use_container_width=True, hide_index=True)
+        st.dataframe(mn_df, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Download many-to-many CSV",
+            data=mn_df.to_csv(index=False).encode("utf-8"),
+            file_name="dataverse_many_to_many.csv",
+            mime="text/csv",
+        )
+
+
+def render_modeling_summary_section() -> None:
+    catalog_tables = st.session_state.get("catalog_tables", {})
+    if not catalog_tables:
+        st.info("No catalog data is loaded yet. Fetch Dataverse metadata first.")
+        return
+
+    st.markdown("### Modeling Summary")
+    summary_rows = []
+    state_rows = []
+    drop_rows = []
+    computed_rows = []
+    multi_rows = []
+
+    for table in catalog_tables.values():
+        profile = table.get("metadata_profile", {})
+        summary_rows.append(
+            {
+                "table_name": table.get("table_name", ""),
+                "primary_key": table.get("primary_key", ""),
+                "centrality_score": profile.get("centrality_score", ""),
+                "migration_priority": profile.get("migration_priority", ""),
+                "recommended_target_entity": profile.get("recommended_target_entity", ""),
+                "lookup_columns": profile.get("lookup_columns", 0),
+                "incoming_relationships": profile.get("incoming_relationships", 0),
+                "outgoing_relationships": profile.get("outgoing_relationships", 0),
+                "rollup_fields": profile.get("rollup_fields", 0),
+                "formula_fields": profile.get("formula_fields", 0),
+                "multiselect_columns": profile.get("multiselect_columns", 0),
+                "notes": profile.get("notes", ""),
+            }
+        )
+        for column in table.get("schema", []):
+            row = {
+                "table_name": table.get("table_name", ""),
+                "column_name": column.get("column_name", ""),
+                "attribute_type": column.get("attribute_type", ""),
+                "sql_type": column.get("sql_type", ""),
+                "category": column.get("category", ""),
+                "modeling_action": column.get("modeling_action", ""),
+                "option_values": column.get("option_values", ""),
+            }
+            if column.get("is_state_machine_candidate"):
+                state_rows.append(row)
+            if column.get("modeling_action") == "Drop from target model":
+                drop_rows.append(row)
+            if column.get("category") in {"Rollup", "Formula"}:
+                computed_rows.append(row)
+            if column.get("attribute_type") == "MultiSelectPicklist":
+                multi_rows.append(row)
+
+    summary_df = pd.DataFrame(summary_rows).sort_values(
+        by=["centrality_score", "lookup_columns", "table_name"],
+        ascending=[True, False, True],
+    )
+    top_cols = st.columns(4)
+    top_cols[0].metric("Tables", len(summary_df))
+    top_cols[1].metric("High centrality", int((summary_df["centrality_score"] == "HIGH").sum()))
+    top_cols[2].metric("P0 candidates", int((summary_df["migration_priority"] == "P0 - Critical").sum()))
+    top_cols[3].metric("State machine fields", len(state_rows))
+
+    st.markdown("#### Aggregate / Reference Prioritization")
+    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+    st.download_button(
+        "Download modeling summary CSV",
+        data=summary_df.to_csv(index=False).encode("utf-8"),
+        file_name="dataverse_modeling_summary.csv",
+        mime="text/csv",
+    )
+
+    if computed_rows:
+        st.markdown("#### Rollup and Formula Fields")
+        st.dataframe(pd.DataFrame(computed_rows), use_container_width=True, hide_index=True)
+    if drop_rows:
+        st.markdown("#### Columns Marked to Drop")
+        st.dataframe(pd.DataFrame(drop_rows), use_container_width=True, hide_index=True)
+    if multi_rows:
+        st.markdown("#### MultiSelect Columns")
+        st.dataframe(pd.DataFrame(multi_rows), use_container_width=True, hide_index=True)
+    if state_rows:
+        st.markdown("#### State Machine Candidates")
+        st.dataframe(pd.DataFrame(state_rows), use_container_width=True, hide_index=True)
 
 
 def main() -> None:
@@ -655,8 +765,8 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    tab_input, tab_catalog, tab_relationships, tab_batch, tab_journeys = st.tabs(
-        ["Input & Sync", "Catalog", "Relationships", "Batch", "User Journey Mapping"]
+    tab_input, tab_catalog, tab_relationships, tab_modeling, tab_batch, tab_journeys = st.tabs(
+        ["Input & Sync", "Catalog", "Relationships", "Modeling Summary", "Batch", "User Journey Mapping"]
     )
     with tab_input:
         render_input_section()
@@ -664,6 +774,8 @@ def main() -> None:
         render_catalog_section()
     with tab_relationships:
         render_relationships_section()
+    with tab_modeling:
+        render_modeling_summary_section()
     with tab_batch:
         render_batch_section()
     with tab_journeys:
