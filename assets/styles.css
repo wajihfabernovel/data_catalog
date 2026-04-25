@@ -398,6 +398,15 @@ section[data-testid="stSidebar"] code {
 .badge-problematic  { background: #ffebee; color: #7d1e27 !important; border: 1px solid #ef9a9a; }
 .badge-team         { background: #e7f0fb; color: #1f4e79 !important; border: 1px solid #b8d2ee; }
 
+/* ── API enrichment / column-category badges ─────────────────────────── */
+.badge-api-enriched   { background: #1f4e79; color: #ffffff !important; border: 1px solid #163a5a; }
+.badge-cat-business   { background: #e8f5e9; color: #1b5e20 !important; border: 1px solid #81c784; }
+.badge-cat-system     { background: #f3f3f3; color: #4a4a4a !important; border: 1px solid #cccccc; }
+.badge-cat-lookup     { background: #ede7f6; color: #4a148c !important; border: 1px solid #b39ddb; }
+.badge-cat-rollup     { background: #fff8e1; color: #7a5100 !important; border: 1px solid #ffe082; }
+.badge-cat-formula    { background: #fff3e0; color: #7a3900 !important; border: 1px solid #ffcc80; }
+.badge-cat-shadow     { background: #ffebee; color: #7d1e27 !important; border: 1px solid #ef9a9a; }
+
 /* ── Tabs ────────────────────────────────────────────────────────── */
 button[data-baseweb="tab"] {
     font-weight: 600 !important;
