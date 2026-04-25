@@ -71,7 +71,10 @@ def _journey_store() -> JourneysStore | None:
 def _ensure_editor_state(existing_journeys: list[dict[str, Any]]) -> None:
     st.session_state.setdefault("journey_editor_loaded_id", "")
     st.session_state.setdefault("journey_editor_analysis_annotations", {})
-    st.session_state.setdefault("journey_editor_journey_id", next_journey_id([j["journey_id"] for j in existing_journeys]))
+    st.session_state.setdefault(
+        "journey_editor_journey_id",
+        next_journey_id([j["journey_id"] for j in existing_journeys]),
+    )
     st.session_state.setdefault("journey_editor_journey_name", "")
     st.session_state.setdefault("journey_editor_module_domain", JOURNEY_MODULE_OPTIONS[0])
     st.session_state.setdefault("journey_editor_user_roles", [])
@@ -109,7 +112,9 @@ def _load_editor(journey: dict[str, Any], existing_journeys: list[dict[str, Any]
     st.session_state["journey_editor_frequency"] = journey.get("frequency") or JOURNEY_FREQUENCY_OPTIONS[0]
     st.session_state["journey_editor_complexity"] = journey.get("complexity") or JOURNEY_COMPLEXITY_OPTIONS[0]
     interview_date = journey.get("interview_date")
-    st.session_state["journey_editor_interview_date"] = date.fromisoformat(interview_date) if interview_date else date.today()
+    st.session_state["journey_editor_interview_date"] = (
+        date.fromisoformat(interview_date) if interview_date else date.today()
+    )
     st.session_state["journey_editor_interviewer"] = journey.get("interviewer", "Wajih")
 
     steps_payload: list[dict[str, Any]] = []
@@ -123,10 +128,23 @@ def _load_editor(journey: dict[str, Any], existing_journeys: list[dict[str, Any]
                 "step_number": step_number,
                 "user_action": step.get("user_action", ""),
                 "screen_component": step.get("screen_component", ""),
-                "tables_read_known": [ref["table_name"] for ref in step.get("table_refs", []) if ref.get("access_mode") == "READ" and ref.get("is_catalog_table")],
-                "tables_read_extra": ", ".join([name for name in reads if name not in [ref["table_name"] for ref in step.get("table_refs", []) if ref.get("access_mode") == "READ" and ref.get("is_catalog_table")]]),
-                "tables_written_known": [ref["table_name"] for ref in writes if ref.get("is_catalog_table")],
-                "tables_written_extra": ", ".join([ref["table_name"] for ref in writes if not ref.get("is_catalog_table")]),
+                "tables_read_known": [
+                    ref["table_name"] for ref in step.get("table_refs", [])
+                    if ref.get("access_mode") == "READ" and ref.get("is_catalog_table")
+                ],
+                "tables_read_extra": ", ".join([
+                    name for name in reads
+                    if name not in [
+                        ref["table_name"] for ref in step.get("table_refs", [])
+                        if ref.get("access_mode") == "READ" and ref.get("is_catalog_table")
+                    ]
+                ]),
+                "tables_written_known": [
+                    ref["table_name"] for ref in writes if ref.get("is_catalog_table")
+                ],
+                "tables_written_extra": ", ".join([
+                    ref["table_name"] for ref in writes if not ref.get("is_catalog_table")
+                ]),
                 "validation_rules": step.get("validation_rules", ""),
                 "business_rules": step.get("business_rules", ""),
                 "notes": step.get("notes", ""),
@@ -189,7 +207,11 @@ def _seed_step_widget_defaults(step: dict[str, Any], idx: int) -> None:
         st.session_state.setdefault(f"{prefix}_write_op_{table_name}", operation)
 
 
-def _collect_editor_payload(catalog_tables: dict[str, dict]) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[str]]:
+def _collect_editor_payload(
+    catalog_tables: dict[str, dict],
+) -> tuple[
+    dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[str]
+]:
     journey = {
         "journey_id": st.session_state.get("journey_editor_journey_id", "").strip(),
         "journey_name": st.session_state.get("journey_editor_journey_name", "").strip(),
@@ -215,7 +237,11 @@ def _collect_editor_payload(catalog_tables: dict[str, dict]) -> tuple[dict[str, 
     if not journey["module_domain"]:
         errors.append("Module/Domain is required.")
 
-    catalog_lookup = {table["table_name"].casefold(): table for table in catalog_tables.values() if table.get("table_name")}
+    catalog_lookup = {
+        table["table_name"].casefold(): table
+        for table in catalog_tables.values()
+        if table.get("table_name")
+    }
     editor_steps = st.session_state.get("journey_editor_steps", [])
     seen_step_numbers: set[int] = set()
 
@@ -233,7 +259,10 @@ def _collect_editor_payload(catalog_tables: dict[str, dict]) -> tuple[dict[str, 
         if isinstance(transition_rows, pd.DataFrame):
             transition_dicts = transition_rows.fillna("").to_dict(orient="records")
         else:
-            transition_dicts = pd.DataFrame(transition_rows).fillna("").to_dict(orient="records") if transition_rows is not None else []
+            transition_dicts = (
+                pd.DataFrame(transition_rows).fillna("").to_dict(orient="records")
+                if transition_rows is not None else []
+            )
         cleaned_transitions = []
         for row in transition_dicts:
             row = {key: str(value).strip() for key, value in row.items()}
@@ -315,7 +344,11 @@ def _build_graphviz_network(edges: list[tuple[str, str, str]]) -> str:
 
 
 def _build_state_machine_dot(transitions: list[dict[str, Any]]) -> str:
-    lines = ["digraph state_machine {", '  rankdir="LR";', '  node [shape=ellipse, style=filled, fillcolor="#eef5ff"];']
+    lines = [
+        "digraph state_machine {",
+        '  rankdir="LR";',
+        '  node [shape=ellipse, style=filled, fillcolor="#eef5ff"];',
+    ]
     states: set[str] = set()
     for transition in transitions:
         from_state = transition.get("from_state") or "START"
@@ -333,9 +366,19 @@ def _build_state_machine_dot(transitions: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _render_capture_page(store: JourneysStore, catalog_tables: dict[str, dict], existing_journeys: list[dict[str, Any]], actor_name: str) -> None:
+def _render_capture_page(
+    store: JourneysStore,
+    catalog_tables: dict[str, dict],
+    existing_journeys: list[dict[str, Any]],
+    actor_name: str,
+) -> None:
     _ensure_editor_state(existing_journeys)
     st.subheader("Capture Journey")
+    st.caption(
+        "Define a new journey or edit an existing one. Fill in the metadata (module, role, frequency), "
+        "add numbered steps describing what the user does and which table/action is involved, then record "
+        "status-field transitions triggered along the way. Save to Supabase when ready."
+    )
     meta_left, meta_right = st.columns(2)
     with meta_left:
         st.text_input("Journey ID", key="journey_editor_journey_id")
@@ -384,8 +427,9 @@ def _render_capture_page(store: JourneysStore, catalog_tables: dict[str, dict], 
                 key=f"{prefix}_tables_written_extra",
             )
 
-            selected_write_tables = st.session_state.get(f"{prefix}_tables_written_known", []) + normalize_free_text_tables(
-                st.session_state.get(f"{prefix}_tables_written_extra", "")
+            selected_write_tables = (
+                st.session_state.get(f"{prefix}_tables_written_known", [])
+                + normalize_free_text_tables(st.session_state.get(f"{prefix}_tables_written_extra", ""))
             )
             if selected_write_tables:
                 st.caption("Write operations")
@@ -448,6 +492,10 @@ def _render_capture_page(store: JourneysStore, catalog_tables: dict[str, dict], 
 
 def _render_view_page(store: JourneysStore, existing_journeys: list[dict[str, Any]]) -> None:
     st.subheader("View Journeys")
+    st.caption(
+        "Browse all saved journeys. Filter by module, frequency, or complexity, then expand any journey "
+        "to inspect its full step sequence, involved tables, and associated state transitions."
+    )
     if not existing_journeys:
         st.info("No journeys have been captured yet.")
         return
@@ -472,7 +520,10 @@ def _render_view_page(store: JourneysStore, existing_journeys: list[dict[str, An
     if role_filter:
         filtered_df = filtered_df[
             filtered_df["primary_user_role"].fillna("").apply(
-                lambda value: any(role in [item.strip() for item in str(value).split(",") if item.strip()] for role in role_filter)
+                lambda value: any(
+                    role in [item.strip() for item in str(value).split(",") if item.strip()]
+                    for role in role_filter
+                )
             )
         ]
     if complexity_filter:
@@ -496,7 +547,6 @@ def _render_view_page(store: JourneysStore, existing_journeys: list[dict[str, An
         hide_index=True,
     )
 
-    journey_lookup = {journey["journey_id"]: journey for journey in existing_journeys}
     selected_journey_id = st.selectbox("Select Journey", filtered_df["journey_id"].tolist())
     selected_journey = store.fetch_journey(selected_journey_id)
     if not selected_journey:
@@ -532,7 +582,11 @@ def _render_view_page(store: JourneysStore, existing_journeys: list[dict[str, An
             st.rerun()
 
 
-def _render_analysis_page(store: JourneysStore, catalog_tables: dict[str, dict], existing_journeys: list[dict[str, Any]]) -> None:
+def _render_analysis_page(
+    store: JourneysStore,
+    catalog_tables: dict[str, dict],
+    existing_journeys: list[dict[str, Any]],
+) -> None:
     st.subheader("Table Analysis")
     if not existing_journeys:
         st.info("No journeys are available for analysis yet.")
@@ -597,7 +651,11 @@ def _render_state_machine_page(store: JourneysStore) -> None:
     if not transitions:
         st.info("No state transitions have been captured yet.")
         return
-    entities = sorted({transition.get("entity_table", "") for transition in transitions if transition.get("entity_table")})
+    entities = sorted({
+        transition.get("entity_table", "")
+        for transition in transitions
+        if transition.get("entity_table")
+    })
     selected_entity = st.selectbox("Select Entity/Table", entities)
     filtered = [transition for transition in transitions if transition.get("entity_table") == selected_entity]
     st.graphviz_chart(_build_state_machine_dot(filtered), use_container_width=True)
@@ -664,7 +722,12 @@ def _render_export_page(
         )
         st.caption(f"Local export path: `{export_path}`")
         csv_payload = pd.DataFrame(analysis_rows).to_csv(index=False).encode("utf-8")
-        st.download_button("Download Table Cross-Reference CSV", data=csv_payload, file_name="table_cross_reference.csv", mime="text/csv")
+        st.download_button(
+            "Download Table Cross-Reference CSV",
+            data=csv_payload,
+            file_name="table_cross_reference.csv",
+            mime="text/csv",
+        )
 
     uploaded_file = st.file_uploader("Import existing journey workbook", type=["xlsx"])
     if uploaded_file is not None and st.button("Import Workbook", use_container_width=True):
@@ -676,6 +739,11 @@ def render_journey_mapping(catalog_tables: dict[str, dict], actor_name: str) -> 
     store = _journey_store()
     if not store:
         return
+    st.caption(
+        "Map business processes onto Dataverse entities — capture step-by-step user journeys, record "
+        "status-field transitions per entity, then analyse table hotspots and export the full picture "
+        "as an Excel workbook or state-machine JSON for developer handoff."
+    )
     existing_journeys = store.fetch_journeys()
     _ensure_editor_state(existing_journeys)
 
