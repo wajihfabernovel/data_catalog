@@ -151,7 +151,9 @@ class DataverseMetadataClient:
             return "Formula"
         if attr.get("is_custom_attribute") and attr.get("is_valid_odata_attribute"):
             return "Custom Business"
-        if attr.get("is_valid_odata_attribute") is False or logical_name.endswith("name") or logical_name.endswith("yominame"):
+        if (attr.get("is_valid_odata_attribute") is False
+                or logical_name.endswith("name")
+                or logical_name.endswith("yominame")):
             return "Virtual / Shadow"
         return "System"
 
@@ -229,14 +231,27 @@ class DataverseMetadataClient:
 
     def _fetch_picklist_metadata(self, table_name: str) -> dict[str, dict[str, Any]]:
         payload = self._get(
-            f"EntityDefinitions(LogicalName='{table_name}')/Attributes/Microsoft.Dynamics.CRM.PicklistAttributeMetadata",
+            f"EntityDefinitions(LogicalName='{table_name}')"
+            "/Attributes/Microsoft.Dynamics.CRM.PicklistAttributeMetadata",
             params={"$select": "LogicalName,DefaultFormValue", "$expand": "OptionSet($select=Options)"},
         )
         return {row["LogicalName"]: row for row in payload.get("value", []) if row.get("LogicalName")}
 
+    def _fetch_custom_entity_names(self) -> set[str]:
+        payload = self._get(
+            "EntityDefinitions",
+            params={"$select": "LogicalName", "$filter": "IsCustomEntity eq true"},
+        )
+        return {
+            self._safe_value(row.get("LogicalName"))
+            for row in payload.get("value", [])
+            if row.get("LogicalName")
+        }
+
     def _fetch_decimal_metadata(self, table_name: str) -> dict[str, dict[str, Any]]:
         payload = self._get(
-            f"EntityDefinitions(LogicalName='{table_name}')/Attributes/Microsoft.Dynamics.CRM.DecimalAttributeMetadata",
+            f"EntityDefinitions(LogicalName='{table_name}')"
+            "/Attributes/Microsoft.Dynamics.CRM.DecimalAttributeMetadata",
             params={"$select": "LogicalName,Precision,MinValue,MaxValue"},
         )
         return {row["LogicalName"]: row for row in payload.get("value", []) if row.get("LogicalName")}
@@ -302,6 +317,7 @@ class DataverseMetadataClient:
         string_meta: dict[str, dict[str, Any]],
         picklist_meta: dict[str, dict[str, Any]],
         decimal_meta: dict[str, dict[str, Any]],
+        custom_entity_names: set[str] | None = None,
     ) -> dict[str, Any]:
         schema: list[dict[str, Any]] = []
         primary_key = ""
@@ -357,6 +373,9 @@ class DataverseMetadataClient:
             if attr["is_primary_id"]:
                 primary_key = logical_name
             if attribute_type in {"Lookup", "Owner", "Customer"}:
+                raw_targets = [t.strip() for t in attr["targets"].split(",") if t.strip()] if attr["targets"] else []
+                if custom_entity_names is not None and not any(t in custom_entity_names for t in raw_targets):
+                    continue
                 relationships["references"].append(
                     {
                         "fk_column": logical_name,
@@ -413,6 +432,7 @@ class DataverseMetadataClient:
         string_meta = self._fetch_string_metadata(table_name)
         picklist_meta = self._fetch_picklist_metadata(table_name)
         decimal_meta = self._fetch_decimal_metadata(table_name)
+        custom_entity_names = self._fetch_custom_entity_names()
         return self._build_entity_profile(
             table_name=table_name,
             base_attributes=base_attributes,
@@ -420,11 +440,24 @@ class DataverseMetadataClient:
             string_meta=string_meta,
             picklist_meta=picklist_meta,
             decimal_meta=decimal_meta,
+            custom_entity_names=custom_entity_names,
         )
 
     def fetch_entities(self, table_names: list[str]) -> list[dict[str, Any]]:
         normalized = normalize_table_names(",".join(table_names))
-        return [self.fetch_entity_profile(name) for name in normalized]
+        custom_entity_names = self._fetch_custom_entity_names()
+        return [
+            self._build_entity_profile(
+                table_name=name,
+                base_attributes=self._fetch_base_attributes(name),
+                lookup_meta=self._fetch_lookup_metadata(name),
+                string_meta=self._fetch_string_metadata(name),
+                picklist_meta=self._fetch_picklist_metadata(name),
+                decimal_meta=self._fetch_decimal_metadata(name),
+                custom_entity_names=custom_entity_names,
+            )
+            for name in normalized
+        ]
 
     def fetch_all_custom_entities(self) -> list[dict[str, Any]]:
         expanded = self._fetch_all_custom_entities_expanded()
@@ -450,6 +483,7 @@ class DataverseMetadataClient:
                 string_meta=self._fetch_string_metadata(table_name),
                 picklist_meta=self._fetch_picklist_metadata(table_name),
                 decimal_meta=self._fetch_decimal_metadata(table_name),
+                custom_entity_names=entity_names,
             )
             entity["display_name"] = self._display_label(row.get("DisplayName")) or table_name
             entity["primary_key"] = entity.get("primary_key") or self._safe_value(row.get("PrimaryIdAttribute"))
@@ -462,7 +496,7 @@ class DataverseMetadataClient:
             referencing = self._safe_value(row.get("ReferencingEntity"))
             if referenced not in entity_names and referencing not in entity_names:
                 continue
-            if referencing in entities_by_name:
+            if referencing in entities_by_name and referenced in entity_names:
                 entities_by_name[referencing]["relationships"]["references"].append(
                     {
                         "fk_column": self._safe_value(row.get("ReferencingAttribute")),
@@ -472,7 +506,7 @@ class DataverseMetadataClient:
                         "mandatory": False,
                     }
                 )
-            if referenced in entity_names:
+            if referenced in entity_names and referencing in entity_names:
                 referenced_by[referenced].append(
                     {
                         "table_name": referencing,
