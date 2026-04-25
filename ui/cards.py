@@ -23,6 +23,23 @@ def _badge(label: str, css_class: str) -> str:
     return f'<span class="status-badge {css_class}">{label}</span>'
 
 
+def _api_inline_badges(table: dict) -> str:
+    """Compact inline API-enrichment badges shown on the card header."""
+    stats = (table.get("dataverse_meta") or {}).get("stats", {})
+    if not stats:
+        return ""
+    parts = ['<span class="status-badge badge-api-enriched">API</span>']
+    if stats.get("business"):
+        parts.append(f'<span class="status-badge badge-cat-business">{stats["business"]} biz</span>')
+    if stats.get("rollup"):
+        parts.append(f'<span class="status-badge badge-cat-rollup">{stats["rollup"]} rollup</span>')
+    if stats.get("formula"):
+        parts.append(f'<span class="status-badge badge-cat-formula">{stats["formula"]} formula</span>')
+    if stats.get("lookup"):
+        parts.append(f'<span class="status-badge badge-cat-lookup">{stats["lookup"]} FK</span>')
+    return " ".join(parts)
+
+
 def render_table_card(
     table: dict,
     on_save_sp=None,
@@ -34,42 +51,39 @@ def render_table_card(
         table.get("data_quality", {})
         .get("overall_quality_rating", "ACCEPTABLE")
     )
-    signoff_badge = _badge(
-        signoff_status,
-        _SIGNOFF_BADGE_CLASS.get(signoff_status, "badge-draft"),
-    )
-    quality_badge = _badge(
-        quality_rating,
-        _QUALITY_BADGE_CLASS.get(quality_rating, "badge-acceptable"),
-    )
+    signoff_badge = _badge(signoff_status, _SIGNOFF_BADGE_CLASS.get(signoff_status, "badge-draft"))
+    quality_badge = _badge(quality_rating, _QUALITY_BADGE_CLASS.get(quality_rating, "badge-acceptable"))
     team_badge = _badge(table.get("owning_team", "D&IG"), "badge-team")
+    api_badges = _api_inline_badges(table)
 
     with st.container(border=True):
-        summary_cols = st.columns([3, 1, 1, 1])
+        # Header row: wider name col + metrics
+        meta_stats = (table.get("dataverse_meta") or {}).get("stats", {})
+        has_api = bool(meta_stats)
+        col_widths = [3, 1, 1, 1] if has_api else [3, 1, 1]
+        summary_cols = st.columns(col_widths)
+
         summary_cols[0].markdown(
-            f"### {table['table_name']} {signoff_badge} {quality_badge} {team_badge}",
+            f"### {table['table_name']} {signoff_badge} {quality_badge} {team_badge} {api_badges}",
             unsafe_allow_html=True,
         )
         pk = table.get("primary_key") or "N/A"
         summary_cols[1].metric("Primary key", pk)
-        summary_cols[2].metric("Columns", len(table.get("schema", [])))
-        summary_cols[3].metric(
-            "State fields",
-            len(
-                [
-                    column
-                    for column in table.get("schema", [])
-                    if column.get("is_state_machine_candidate")
-                ]
-            ),
+        summary_cols[2].metric(
+            "Attrs (API)" if has_api else "Columns",
+            meta_stats.get("total", len(table.get("schema", []))),
         )
+        if has_api:
+            # Show business-column count as the key signal for the card
+            summary_cols[3].metric("Business cols", meta_stats.get("business", 0))
 
+        # Legacy metadata_profile caption (if present and no API stats yet)
         profile = table.get("metadata_profile", {})
-        if profile:
+        if profile and not has_api:
             st.caption(
                 " | ".join(
                     [
-                        f"Custom business: {profile.get('custom_business_columns', 0)}",
+                        f"Custom: {profile.get('custom_business_columns', 0)}",
                         f"Rollup: {profile.get('rollup_fields', 0)}",
                         f"Formula: {profile.get('formula_fields', 0)}",
                         f"Lookups: {profile.get('lookup_columns', 0)}",
