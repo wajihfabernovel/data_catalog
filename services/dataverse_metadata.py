@@ -459,20 +459,28 @@ class DataverseMetadataClient:
             for name in normalized
         ]
 
-    def fetch_all_custom_entities(self) -> list[dict[str, Any]]:
+    def fetch_all_custom_entities(self, name_prefix: str | None = None) -> list[dict[str, Any]]:
         expanded = self._fetch_all_custom_entities_expanded()
         entities: list[dict[str, Any]] = []
+        # entity_names stays the full custom-entity set so FK reference filtering is accurate
         entity_names = {
             self._safe_value(row.get("LogicalName"))
             for row in expanded
             if self._safe_value(row.get("LogicalName"))
         }
+        # rows_to_process is limited to the requested prefix (avoids N×4 API calls for excluded tables)
+        rows_to_process = [
+            row for row in expanded
+            if not name_prefix
+            or self._safe_value(row.get("LogicalName")).startswith(name_prefix)
+        ]
+        target_names = {self._safe_value(row.get("LogicalName")) for row in rows_to_process}
         referenced_by: dict[str, list[dict[str, Any]]] = defaultdict(list)
         many_to_many_by_entity: dict[str, list[dict[str, Any]]] = defaultdict(list)
         one_to_many_rows = self._fetch_one_to_many_relationships()
         many_to_many_rows = self._fetch_many_to_many_relationships()
 
-        for row in expanded:
+        for row in rows_to_process:
             table_name = self._safe_value(row.get("LogicalName"))
             if not table_name:
                 continue
@@ -496,6 +504,7 @@ class DataverseMetadataClient:
             referencing = self._safe_value(row.get("ReferencingEntity"))
             if referenced not in entity_names and referencing not in entity_names:
                 continue
+            # Only attach to entities we actually processed (target_names)
             if referencing in entities_by_name and referenced in entity_names:
                 entities_by_name[referencing]["relationships"]["references"].append(
                     {
@@ -506,7 +515,7 @@ class DataverseMetadataClient:
                         "mandatory": False,
                     }
                 )
-            if referenced in entity_names and referencing in entity_names:
+            if referenced in target_names and referencing in entity_names:
                 referenced_by[referenced].append(
                     {
                         "table_name": referencing,
@@ -518,7 +527,7 @@ class DataverseMetadataClient:
         for row in many_to_many_rows:
             entity1 = self._safe_value(row.get("Entity1LogicalName"))
             entity2 = self._safe_value(row.get("Entity2LogicalName"))
-            if entity1 not in entity_names and entity2 not in entity_names:
+            if entity1 not in target_names and entity2 not in target_names:
                 continue
             entry = {
                 "schema_name": self._safe_value(row.get("SchemaName")),
@@ -528,9 +537,9 @@ class DataverseMetadataClient:
                 "entity1_intersect_attribute": self._safe_value(row.get("Entity1IntersectAttribute")),
                 "entity2_intersect_attribute": self._safe_value(row.get("Entity2IntersectAttribute")),
             }
-            if entity1 in entity_names:
+            if entity1 in target_names:
                 many_to_many_by_entity[entity1].append(entry)
-            if entity2 in entity_names:
+            if entity2 in target_names:
                 many_to_many_by_entity[entity2].append(entry)
 
         for entity in entities:
