@@ -316,6 +316,7 @@ def render_api_discovery(
     )
     fetch_all = fetch_mode.startswith("All")
 
+    _PREFIX = "hive_"
     selected_keys: list[str] = []
     if not fetch_all:
         if not catalog_tables:
@@ -323,9 +324,13 @@ def render_api_discovery(
                 "No tables loaded yet. Parse XML metadata or refresh from Supabase first.")
             return
         sorted_keys = sorted(
-            catalog_tables, key=lambda k: catalog_tables[k]["table_name"].casefold())
-        display_names = {k: catalog_tables[k]
-                         ["table_name"] for k in sorted_keys}
+            (k for k in catalog_tables if catalog_tables[k].get("table_name", "").startswith(_PREFIX)),
+            key=lambda k: catalog_tables[k]["table_name"].casefold(),
+        )
+        if not sorted_keys:
+            st.info(f"No tables with prefix '{_PREFIX}' found in the catalog.")
+            return
+        display_names = {k: catalog_tables[k]["table_name"] for k in sorted_keys}
         selected_keys = st.multiselect(
             "Select tables",
             options=sorted_keys,
