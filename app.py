@@ -23,6 +23,12 @@ load_dotenv()
 
 STYLE_PATH = Path(__file__).parent / "assets" / "styles.css"
 EXPORT_DIR = Path(__file__).parent / "exports"
+TABLE_PREFIX = "hive_"
+
+
+def _prefix_filter(catalog: dict) -> dict:
+    """Return only tables whose logical name starts with TABLE_PREFIX."""
+    return {k: v for k, v in catalog.items() if v.get("table_name", "").startswith(TABLE_PREFIX)}
 
 
 def load_styles() -> None:
@@ -170,6 +176,11 @@ def fetch_dataverse_metadata_and_sync() -> None:
         st.error("Provide at least one table name or load catalog tables before fetching Dataverse metadata.")
         return
 
+    requested_tables = [t for t in requested_tables if t.startswith(TABLE_PREFIX)]
+    if not requested_tables:
+        st.error(f"No tables matching prefix '{TABLE_PREFIX}' found.")
+        return
+
     status = st.status("Fetching Dataverse metadata for selected tables...", expanded=True)
     try:
         status.write(f"Tables requested: {len(requested_tables)}")
@@ -211,8 +222,11 @@ def fetch_all_custom_dataverse_tables_and_sync() -> None:
     status = st.status("Fetching all custom Dataverse tables...", expanded=True)
     try:
         status.write("Loading custom entity definitions with expanded attributes.")
-        fetched_tables = get_dataverse_client().fetch_all_custom_entities()
-        status.write(f"Fetched and enriched {len(fetched_tables)} custom tables.")
+        fetched_tables = [
+            t for t in get_dataverse_client().fetch_all_custom_entities()
+            if t.get("table_name", "").startswith(TABLE_PREFIX)
+        ]
+        status.write(f"Fetched and enriched {len(fetched_tables)} custom tables (prefix: '{TABLE_PREFIX}').")
     except (RuntimeError, DataverseConfigError, ValueError, OSError) as exc:
         status.update(label="Dataverse bulk metadata fetch failed", state="error")
         st.error(str(exc))
@@ -385,11 +399,11 @@ def table_export(updated_table: dict) -> None:
 
 
 def render_catalog_section() -> None:
-    catalog_tables = st.session_state.get("catalog_tables", {})
+    catalog_tables = _prefix_filter(st.session_state.get("catalog_tables", {}))
     if not catalog_tables or _has_missing_schema(catalog_tables):
         try:
             refresh_from_database(show_message=False)
-            catalog_tables = st.session_state.get("catalog_tables", {})
+            catalog_tables = _prefix_filter(st.session_state.get("catalog_tables", {}))
         except (RuntimeError, SupabaseConfigError):
             catalog_tables = {}
 
@@ -487,7 +501,7 @@ def render_sidebar_help() -> None:
 
 
 def render_batch_section() -> None:
-    catalog_tables = st.session_state.get("catalog_tables", {})
+    catalog_tables = _prefix_filter(st.session_state.get("catalog_tables", {}))
     if not catalog_tables:
         st.info("No tables loaded yet. Use the Input & Sync tab to parse metadata first.")
         return
@@ -597,7 +611,7 @@ def _relationship_dot(visible_tables: dict[str, dict]) -> str:
 
 
 def render_relationships_section() -> None:
-    catalog_tables = st.session_state.get("catalog_tables", {})
+    catalog_tables = _prefix_filter(st.session_state.get("catalog_tables", {}))
     if not catalog_tables:
         st.info("No catalog data is loaded yet. Fetch Dataverse metadata first.")
         return
@@ -683,7 +697,7 @@ def render_relationships_section() -> None:
 
 
 def render_modeling_summary_section() -> None:
-    catalog_tables = st.session_state.get("catalog_tables", {})
+    catalog_tables = _prefix_filter(st.session_state.get("catalog_tables", {}))
     if not catalog_tables:
         st.info("No catalog data is loaded yet. Fetch Dataverse metadata first.")
         return
