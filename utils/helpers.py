@@ -7,6 +7,17 @@ from copy import deepcopy
 from datetime import date, datetime
 
 
+COLUMN_CATEGORIES = ["BUSINESS", "SYSTEM", "LOOKUP", "ROLLUP", "FORMULA", "SHADOW"]
+SOURCE_TYPES = ["PERSISTED", "ROLLUP", "FORMULA"]
+COLUMN_CATEGORY_LABEL: dict[str, str] = {
+    "BUSINESS": "Business",
+    "SYSTEM": "System",
+    "LOOKUP": "FK / Lookup",
+    "ROLLUP": "Rollup (dbt)",
+    "FORMULA": "Formula (dbt)",
+    "SHADOW": "Shadow (drop)",
+}
+
 CHOICES_YES_NO = ["YES", "NO"]
 CHOICES_YES_NO_UNSURE = ["YES", "NO", "UNSURE"]
 QUALITY_RATINGS = ["CLEAN", "ACCEPTABLE", "PROBLEMATIC"]
@@ -96,6 +107,7 @@ def build_default_table_state(parsed_table: dict) -> dict:
             "date_approved": None,
             "notes": "",
         },
+        "dataverse_meta": deepcopy(parsed_table.get("dataverse_meta", {})),
     }
 
 
@@ -129,6 +141,9 @@ def merge_table_state(base_table: dict, stored_table: dict | None) -> dict:
 
     if stored_table.get("metadata_profile"):
         merged["metadata_profile"] = deepcopy(stored_table["metadata_profile"])
+
+    if stored_table.get("dataverse_meta"):
+        merged["dataverse_meta"] = deepcopy(stored_table["dataverse_meta"])
 
     for section in ["data_quality", "pipeline", "target_model", "signoff"]:
         merged[section].update(deepcopy(stored_table.get(section, {})))
