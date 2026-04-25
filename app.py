@@ -246,6 +246,11 @@ def fetch_all_custom_dataverse_tables_and_sync() -> None:
 
 
 def render_input_section() -> None:
+    st.caption(
+        "Start here — paste or upload Dataverse XML metadata, enter table names, then **Parse and sync** "
+        "to populate the workspace. Use **Fetch Dataverse metadata** to enrich selected tables via the "
+        "Web API, or **Fetch all custom tables** to auto-discover your entire schema in one pass."
+    )
     uploaded_file = st.file_uploader("Upload XML metadata", type=["xml"])
     if uploaded_file is not None:
         st.session_state["xml_payload"] = uploaded_file.getvalue().decode("utf-8")
@@ -392,6 +397,11 @@ def render_catalog_section() -> None:
         st.info("No catalog data is loaded yet. Use Input & Sync to parse metadata or refresh from Supabase.")
         return
 
+    st.caption(
+        "Review and annotate every loaded table. Expand a card to edit signoff status, data quality, "
+        "column-level notes, and team ownership. Save changes table-by-table to Supabase or export "
+        "individual tables to Excel. Use the Batch tab for bulk operations."
+    )
     render_catalog_stats(catalog_tables)
     render_export_section()
 
@@ -481,6 +491,12 @@ def render_batch_section() -> None:
     if not catalog_tables:
         st.info("No tables loaded yet. Use the Input & Sync tab to parse metadata first.")
         return
+
+    st.caption(
+        "Run save or export actions across multiple tables in one shot. Select any subset of loaded "
+        "tables, then bulk-save annotations to Supabase, dump a local draft, or generate a combined "
+        "Excel workbook covering all selected tables."
+    )
 
     table_names = sorted(
         catalog_tables.keys(), key=lambda k: catalog_tables[k]["table_name"].casefold()
@@ -586,6 +602,11 @@ def render_relationships_section() -> None:
         st.info("No catalog data is loaded yet. Fetch Dataverse metadata first.")
         return
 
+    st.caption(
+        "Visual FK dependency graph across your custom Dataverse entities — only custom-to-custom links "
+        "are shown; system tables (e.g. systemuser, transactioncurrency) are excluded. Select a subset "
+        "of tables to narrow the graph, then download the edge list as CSV for use in ERD tools."
+    )
     st.markdown("### Relationships")
     table_names = sorted(catalog_tables.keys(), key=lambda k: catalog_tables[k]["table_name"].casefold())
     selected_keys = st.multiselect(
@@ -667,6 +688,12 @@ def render_modeling_summary_section() -> None:
         st.info("No catalog data is loaded yet. Fetch Dataverse metadata first.")
         return
 
+    st.caption(
+        "Migration readiness scorecard ranked by FK centrality (HIGH / MEDIUM / LOW) and priority "
+        "(P0 / P1). Drills into rollup fields to model as dbt metrics, formula columns to model as dbt "
+        "expressions, shadow columns to drop, multiselect fields requiring junction tables, and "
+        "state-machine picklists (statecode / statuscode) with their full option-value sets."
+    )
     st.markdown("### Modeling Summary")
     summary_rows = []
     state_rows = []
