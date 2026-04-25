@@ -14,6 +14,7 @@ from services.dataverse_metadata import DataverseConfigError, DataverseMetadataC
 from services.export import build_excel_workbook
 from services.local_store import load_local_catalog_state, save_local_catalog_state
 from services.supabase_store import SupabaseConfigError, SupabaseStore, load_supabase_config
+from ui.api_discovery import render_api_discovery
 from ui.cards import render_table_card
 from ui.journeys import render_journey_mapping
 from utils.helpers import build_default_table_state, merge_table_state, normalize_table_names
@@ -41,6 +42,7 @@ def init_state() -> None:
         "export_file_path": None,
         "batch_export_payload": None,
         "batch_export_path": None,
+        "api_results": {},
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -765,11 +767,19 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    tab_input, tab_catalog, tab_relationships, tab_modeling, tab_batch, tab_journeys = st.tabs(
-        ["Input & Sync", "Catalog", "Relationships", "Modeling Summary", "Batch", "User Journey Mapping"]
+    tab_input, tab_api, tab_catalog, tab_relationships, tab_modeling, tab_batch, tab_journeys = st.tabs(
+        ["Input & Sync", "API Discovery", "Catalog", "Relationships", "Modeling Summary", "Batch", "User Journey Mapping"]
     )
     with tab_input:
         render_input_section()
+    with tab_api:
+        def _on_api_merge(updated_tables: dict) -> None:
+            st.session_state["catalog_tables"] = updated_tables
+
+        render_api_discovery(
+            st.session_state.get("catalog_tables", {}),
+            on_merge=_on_api_merge,
+        )
     with tab_catalog:
         render_catalog_section()
     with tab_relationships:
