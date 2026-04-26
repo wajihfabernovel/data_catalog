@@ -219,9 +219,9 @@ def fetch_dataverse_metadata_and_sync() -> None:
 
 
 def fetch_all_custom_dataverse_tables_and_sync() -> None:
-    status = st.status("Fetching all custom Dataverse tables...", expanded=True)
+    status = st.status(f"Fetching {TABLE_PREFIX}* Dataverse tables...", expanded=True)
     try:
-        status.write("Loading custom entity definitions with expanded attributes.")
+        status.write(f"Loading custom entity definitions matching '{TABLE_PREFIX}*'.")
         fetched_tables = get_dataverse_client().fetch_all_custom_entities(name_prefix=TABLE_PREFIX)
         status.write(f"Fetched and enriched {len(fetched_tables)} custom tables (prefix: '{TABLE_PREFIX}').")
     except (RuntimeError, DataverseConfigError, ValueError, OSError) as exc:
@@ -253,14 +253,14 @@ def fetch_all_custom_dataverse_tables_and_sync() -> None:
 
     st.session_state["catalog_tables"] = catalog_tables
     status.update(label="Dataverse bulk metadata fetch complete", state="complete")
-    st.success(f"Fetched all custom Dataverse entities: {len(fetched_tables)} table(s).")
+    st.success(f"Fetched {TABLE_PREFIX}* Dataverse entities: {len(fetched_tables)} table(s).")
 
 
 def render_input_section() -> None:
     st.caption(
         "Start here — paste or upload Dataverse XML metadata, enter table names, then **Parse and sync** "
         "to populate the workspace. Use **Fetch Dataverse metadata** to enrich selected tables via the "
-        "Web API, or **Fetch all custom tables** to auto-discover your entire schema in one pass."
+        f"Web API, or **Fetch all {TABLE_PREFIX}* tables** to auto-discover your scoped schema in one pass."
     )
     uploaded_file = st.file_uploader("Upload XML metadata", type=["xml"])
     if uploaded_file is not None:
@@ -289,7 +289,7 @@ def render_input_section() -> None:
             st.error(str(exc))
     if parse_cols[2].button("Fetch Dataverse metadata", use_container_width=True):
         fetch_dataverse_metadata_and_sync()
-    if parse_cols[3].button("Fetch all custom Dataverse tables", use_container_width=True):
+    if parse_cols[3].button(f"Fetch all {TABLE_PREFIX}* Dataverse tables", use_container_width=True):
         fetch_all_custom_dataverse_tables_and_sync()
 
     st.markdown('<p class="button-group-label">Save &amp; Load</p>', unsafe_allow_html=True)
