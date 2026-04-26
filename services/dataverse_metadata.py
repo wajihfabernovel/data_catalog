@@ -200,10 +200,14 @@ class DataverseMetadataClient:
         )
         return payload.get("value", [])
 
-    def _fetch_all_custom_entities_expanded(self, name_prefix: str | None = None) -> list[dict[str, Any]]:
+    def _custom_entity_filter(self, name_prefix: str | None = None) -> str:
         filter_clause = "IsCustomEntity eq true"
         if name_prefix:
-            filter_clause += f" and startswith(LogicalName,'{name_prefix}')"
+            prefix = self._safe_value(name_prefix).replace("'", "''")
+            filter_clause += f" and startswith(LogicalName,'{prefix}')"
+        return filter_clause
+
+    def _fetch_all_custom_entities_expanded(self, name_prefix: str | None = None) -> list[dict[str, Any]]:
         payload = self._get(
             "EntityDefinitions",
             params={
@@ -213,7 +217,7 @@ class DataverseMetadataClient:
                     "LogicalName,DisplayName,AttributeType,AttributeTypeName,IsPrimaryId,"
                     "IsPrimaryName,IsCustomAttribute,IsValidODataAttribute,IsLogical,RequiredLevel,SourceType)"
                 ),
-                "$filter": filter_clause,
+                "$filter": self._custom_entity_filter(name_prefix),
             },
         )
         return payload.get("value", [])
@@ -240,10 +244,10 @@ class DataverseMetadataClient:
         )
         return {row["LogicalName"]: row for row in payload.get("value", []) if row.get("LogicalName")}
 
-    def _fetch_custom_entity_names(self) -> set[str]:
+    def _fetch_custom_entity_names(self, name_prefix: str | None = None) -> set[str]:
         payload = self._get(
             "EntityDefinitions",
-            params={"$select": "LogicalName", "$filter": "IsCustomEntity eq true"},
+            params={"$select": "LogicalName", "$filter": self._custom_entity_filter(name_prefix)},
         )
         return {
             self._safe_value(row.get("LogicalName"))
@@ -463,39 +467,29 @@ class DataverseMetadataClient:
         ]
 
     def fetch_all_custom_entities(self, name_prefix: str | None = None) -> list[dict[str, Any]]:
-        # When a prefix is given, push it into the OData filter so the server returns only matching
-        # entities — avoids downloading attributes for all 1800+ custom tables.
-        expanded = self._fetch_all_custom_entities_expanded(name_prefix=name_prefix)
-        entities: list[dict[str, Any]] = []
-
         if name_prefix:
-            # Lightweight call for the full custom-entity set — needed for accurate FK filtering
-            # without having to download all expanded attribute payloads.
-            entity_names = self._fetch_custom_entity_names()
-        else:
-            entity_names = {
-                self._safe_value(row.get("LogicalName"))
-                for row in expanded
-                if self._safe_value(row.get("LogicalName"))
-            }
+            # Fast path: fetch only matching LogicalNames (tiny payload),
+            # then run the standard per-table 5-call pipeline for those tables.
+            # This avoids downloading the full expanded attribute payload for all 1800+ entities
+            # and skips the expensive global relationship graph calls.
+            all_custom_names = self._fetch_custom_entity_names(name_prefix=name_prefix)
+            target_names = sorted(n for n in all_custom_names if n.startswith(name_prefix))
+            return self.fetch_entities(target_names)
 
-        target_names = {
+        # Full path (no prefix): expanded bulk fetch + global relationship graph.
+        expanded = self._fetch_all_custom_entities_expanded()
+        entities: list[dict[str, Any]] = []
+        entity_names = {
             self._safe_value(row.get("LogicalName"))
             for row in expanded
             if self._safe_value(row.get("LogicalName"))
         }
         referenced_by: dict[str, list[dict[str, Any]]] = defaultdict(list)
         many_to_many_by_entity: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        # Global relationship graph is expensive (~thousands of rows). Skip when filtering by
-        # prefix — attribute-level Lookup data in _build_entity_profile already captures FK edges.
-        if name_prefix:
-            one_to_many_rows: list[dict[str, Any]] = []
-            many_to_many_rows: list[dict[str, Any]] = []
-        else:
-            one_to_many_rows = self._fetch_one_to_many_relationships()
-            many_to_many_rows = self._fetch_many_to_many_relationships()
+        one_to_many_rows = self._fetch_one_to_many_relationships()
+        many_to_many_rows = self._fetch_many_to_many_relationships()
 
-        for row in rows_to_process:
+        for row in expanded:
             table_name = self._safe_value(row.get("LogicalName"))
             if not table_name:
                 continue
@@ -509,7 +503,9 @@ class DataverseMetadataClient:
                 custom_entity_names=entity_names,
             )
             entity["display_name"] = self._display_label(row.get("DisplayName")) or table_name
-            entity["primary_key"] = entity.get("primary_key") or self._safe_value(row.get("PrimaryIdAttribute"))
+            entity["primary_key"] = (
+                entity.get("primary_key") or self._safe_value(row.get("PrimaryIdAttribute"))
+            )
             entities.append(entity)
 
         entities_by_name = {entity["table_name"]: entity for entity in entities}
@@ -519,7 +515,6 @@ class DataverseMetadataClient:
             referencing = self._safe_value(row.get("ReferencingEntity"))
             if referenced not in entity_names and referencing not in entity_names:
                 continue
-            # Only attach to entities we actually processed (target_names)
             if referencing in entities_by_name and referenced in entity_names:
                 entities_by_name[referencing]["relationships"]["references"].append(
                     {
@@ -530,7 +525,7 @@ class DataverseMetadataClient:
                         "mandatory": False,
                     }
                 )
-            if referenced in target_names and referencing in entity_names:
+            if referenced in entity_names and referencing in entity_names:
                 referenced_by[referenced].append(
                     {
                         "table_name": referencing,
@@ -542,7 +537,7 @@ class DataverseMetadataClient:
         for row in many_to_many_rows:
             entity1 = self._safe_value(row.get("Entity1LogicalName"))
             entity2 = self._safe_value(row.get("Entity2LogicalName"))
-            if entity1 not in target_names and entity2 not in target_names:
+            if entity1 not in entity_names and entity2 not in entity_names:
                 continue
             entry = {
                 "schema_name": self._safe_value(row.get("SchemaName")),
@@ -552,17 +547,19 @@ class DataverseMetadataClient:
                 "entity1_intersect_attribute": self._safe_value(row.get("Entity1IntersectAttribute")),
                 "entity2_intersect_attribute": self._safe_value(row.get("Entity2IntersectAttribute")),
             }
-            if entity1 in target_names:
+            if entity1 in entity_names:
                 many_to_many_by_entity[entity1].append(entry)
-            if entity2 in target_names:
+            if entity2 in entity_names:
                 many_to_many_by_entity[entity2].append(entry)
 
         for entity in entities:
             entity["relationships"]["referenced_by"] = sorted(
                 referenced_by.get(entity["table_name"], []),
-                key=lambda item: (item.get("table_name", "").casefold(), item.get("via_column", "").casefold()),
+                key=lambda item: (
+                    item.get("table_name", "").casefold(),
+                    item.get("via_column", "").casefold(),
+                ),
             )
-            # Deduplicate relationship references after merging inferred and official metadata.
             seen_refs: set[tuple[str, str, str]] = set()
             deduped_refs = []
             for ref in entity["relationships"]["references"]:
@@ -582,7 +579,13 @@ class DataverseMetadataClient:
                     self._safe_value(item.get("fk_column")).casefold(),
                 ),
             )
-            entity["metadata_profile"]["incoming_relationships"] = len(entity["relationships"]["referenced_by"])
-            entity["metadata_profile"]["outgoing_relationships"] = len(entity["relationships"]["references"])
-            entity["metadata_profile"]["many_to_many"] = many_to_many_by_entity.get(entity["table_name"], [])
+            entity["metadata_profile"]["incoming_relationships"] = len(
+                entity["relationships"]["referenced_by"]
+            )
+            entity["metadata_profile"]["outgoing_relationships"] = len(
+                entity["relationships"]["references"]
+            )
+            entity["metadata_profile"]["many_to_many"] = many_to_many_by_entity.get(
+                entity["table_name"], []
+            )
         return sorted(entities, key=lambda item: item["table_name"].casefold())
