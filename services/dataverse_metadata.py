@@ -200,12 +200,8 @@ class DataverseMetadataClient:
         )
         return payload.get("value", [])
 
-    def _custom_entity_filter(self, name_prefix: str | None = None) -> str:
-        filter_clause = "IsCustomEntity eq true"
-        if name_prefix:
-            prefix = self._safe_value(name_prefix).replace("'", "''")
-            filter_clause += f" and startswith(LogicalName,'{prefix}')"
-        return filter_clause
+    def _custom_entity_filter(self) -> str:
+        return "IsCustomEntity eq true"
 
     def _fetch_all_custom_entities_expanded(self, name_prefix: str | None = None) -> list[dict[str, Any]]:
         payload = self._get(
@@ -217,10 +213,16 @@ class DataverseMetadataClient:
                     "LogicalName,DisplayName,AttributeType,AttributeTypeName,IsPrimaryId,"
                     "IsPrimaryName,IsCustomAttribute,IsValidODataAttribute,IsLogical,RequiredLevel,SourceType)"
                 ),
-                "$filter": self._custom_entity_filter(name_prefix),
+                "$filter": self._custom_entity_filter(),
             },
         )
-        return payload.get("value", [])
+        rows = payload.get("value", [])
+        if name_prefix:
+            return [
+                row for row in rows
+                if self._safe_value(row.get("LogicalName")).startswith(name_prefix)
+            ]
+        return rows
 
     def _fetch_lookup_metadata(self, table_name: str) -> dict[str, dict[str, Any]]:
         payload = self._get(
@@ -244,10 +246,10 @@ class DataverseMetadataClient:
         )
         return {row["LogicalName"]: row for row in payload.get("value", []) if row.get("LogicalName")}
 
-    def _fetch_custom_entity_names(self, name_prefix: str | None = None) -> set[str]:
+    def _fetch_custom_entity_names(self) -> set[str]:
         payload = self._get(
             "EntityDefinitions",
-            params={"$select": "LogicalName", "$filter": self._custom_entity_filter(name_prefix)},
+            params={"$select": "LogicalName", "$filter": self._custom_entity_filter()},
         )
         return {
             self._safe_value(row.get("LogicalName"))
@@ -468,11 +470,11 @@ class DataverseMetadataClient:
 
     def fetch_all_custom_entities(self, name_prefix: str | None = None) -> list[dict[str, Any]]:
         if name_prefix:
-            # Fast path: fetch only matching LogicalNames (tiny payload),
+            # Fast path: fetch the tiny LogicalName list, locally keep matching names,
             # then run the standard per-table 5-call pipeline for those tables.
             # This avoids downloading the full expanded attribute payload for all 1800+ entities
             # and skips the expensive global relationship graph calls.
-            all_custom_names = self._fetch_custom_entity_names(name_prefix=name_prefix)
+            all_custom_names = self._fetch_custom_entity_names()
             target_names = sorted(n for n in all_custom_names if n.startswith(name_prefix))
             return self.fetch_entities(target_names)
 
