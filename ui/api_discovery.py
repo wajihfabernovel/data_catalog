@@ -342,8 +342,9 @@ def render_api_discovery(
             f"{len(selected_keys)} of {len(sorted_keys)} tables selected.")
     else:
         st.info(
-            "Will call `EntityDefinitions?$filter=IsCustomEntity eq true` "
-            "and fetch the full relationship graph (1:N + M:N) in one pass."
+            f"Will fetch all custom entity names, filter to `{_PREFIX}*` in Python, "
+            f"then run 5 API calls per matching table (base attrs · lookup · string · picklist · decimal). "
+            f"Global relationship graph is skipped for performance."
         )
 
     # ── Action buttons ───────────────────────────────────────────────────────
