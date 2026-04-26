@@ -7,6 +7,7 @@ import os
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
+from postgrest import APIError
 from supabase import Client, create_client
 
 from utils.helpers import parse_date, serialize_date, table_key_from_name
@@ -94,6 +95,43 @@ class SupabaseStore:
         if isinstance(value, str):
             return value.strip().lower() in {"true", "yes", "1"}
         return bool(value)
+
+    @staticmethod
+    def _schema_cache_error_message(error: APIError) -> str:
+        migration_sql = """alter table if exists catalog_tables
+add column if not exists owning_team text,
+add column if not exists metadata_profile_json text;
+
+alter table if exists catalog_columns
+add column if not exists attribute_type text,
+add column if not exists attribute_type_name text,
+add column if not exists is_custom_attribute boolean,
+add column if not exists is_valid_odata_attribute boolean,
+add column if not exists source_type integer,
+add column if not exists source_type_label text,
+add column if not exists max_length integer,
+add column if not exists precision integer,
+add column if not exists min_value text,
+add column if not exists max_value text,
+add column if not exists targets text,
+add column if not exists option_values text,
+add column if not exists category text,
+add column if not exists modeling_action text,
+add column if not exists is_primary_id boolean,
+add column if not exists is_primary_name boolean,
+add column if not exists is_state_machine_candidate boolean;"""
+        return (
+            "Supabase schema is missing columns required by the Dataverse API metadata features. "
+            f"PostgREST returned: {error.message}\n\n"
+            "Run this SQL in the Supabase SQL editor, then rerun the save:\n\n"
+            f"{migration_sql}"
+        )
+
+    @classmethod
+    def _raise_runtime_error(cls, error: APIError) -> None:
+        if getattr(error, "code", "") == "PGRST204":
+            raise RuntimeError(cls._schema_cache_error_message(error)) from error
+        raise RuntimeError(str(error)) from error
 
     def fetch_catalog_state(self) -> dict[str, dict]:
         tables_rows = self._fetch_all_rows(self.config["tables_table"])
@@ -205,110 +243,113 @@ class SupabaseStore:
     def save_tables(self, tables: list[dict], actor_name: str) -> None:
         timestamp = datetime.now(timezone.utc).isoformat()
         for table in tables:
-            table_key = table["table_key"]
-            payload = {
-                "table_key": table_key,
-                "table_name": table["table_name"],
-                "primary_key": table.get("primary_key", ""),
-                "owning_team": table.get("owning_team", "D&IG"),
-                "metadata_profile_json": json.dumps(table.get("metadata_profile", {})),
-                "nullable_issues": table["data_quality"]["nullable_issues"],
-                "format_inconsistencies": table["data_quality"]["format_inconsistencies"],
-                "duplicate_records": table["data_quality"]["duplicate_records"],
-                "orphan_records": table["data_quality"]["orphan_records"],
-                "hard_delete_in_use": table["data_quality"]["hard_delete_in_use"],
-                "overall_quality_rating": table["data_quality"]["overall_quality_rating"],
-                "quality_notes": table["data_quality"]["quality_notes"],
-                "extract_by_pipeline": table["pipeline"]["extract_by_pipeline"],
-                "delta_extraction_column": table["pipeline"]["delta_extraction_column"],
-                "feed_power_bi": table["pipeline"]["feed_power_bi"],
-                "key_metrics_or_dimensions": table["pipeline"]["key_metrics_or_dimensions"],
-                "write_path": table["pipeline"]["write_path"],
-                "recommendation": table["target_model"]["recommendation"],
-                "merge_with": table["target_model"]["merge_with"],
-                "split_into": table["target_model"]["split_into"],
-                "replaced_by": table["target_model"]["replaced_by"],
-                "missing_columns": table["target_model"]["missing_columns"],
-                "missing_constraints": table["target_model"]["missing_constraints"],
-                "completed_by": table["signoff"]["completed_by"],
-                "reviewed_by": table["signoff"]["reviewed_by"],
-                "reviewed_by_business": table["signoff"]["reviewed_by_business"],
-                "status": table["signoff"]["status"],
-                "date_approved": serialize_date(table["signoff"]["date_approved"]),
-                "notes": table["signoff"]["notes"],
-                "last_synced_at": timestamp,
-                "last_modified_by": actor_name,
-            }
-            self.client.table(self.config["tables_table"]).upsert(payload, on_conflict="table_key").execute()
+            try:
+                table_key = table["table_key"]
+                payload = {
+                    "table_key": table_key,
+                    "table_name": table["table_name"],
+                    "primary_key": table.get("primary_key", ""),
+                    "owning_team": table.get("owning_team", "D&IG"),
+                    "metadata_profile_json": json.dumps(table.get("metadata_profile", {})),
+                    "nullable_issues": table["data_quality"]["nullable_issues"],
+                    "format_inconsistencies": table["data_quality"]["format_inconsistencies"],
+                    "duplicate_records": table["data_quality"]["duplicate_records"],
+                    "orphan_records": table["data_quality"]["orphan_records"],
+                    "hard_delete_in_use": table["data_quality"]["hard_delete_in_use"],
+                    "overall_quality_rating": table["data_quality"]["overall_quality_rating"],
+                    "quality_notes": table["data_quality"]["quality_notes"],
+                    "extract_by_pipeline": table["pipeline"]["extract_by_pipeline"],
+                    "delta_extraction_column": table["pipeline"]["delta_extraction_column"],
+                    "feed_power_bi": table["pipeline"]["feed_power_bi"],
+                    "key_metrics_or_dimensions": table["pipeline"]["key_metrics_or_dimensions"],
+                    "write_path": table["pipeline"]["write_path"],
+                    "recommendation": table["target_model"]["recommendation"],
+                    "merge_with": table["target_model"]["merge_with"],
+                    "split_into": table["target_model"]["split_into"],
+                    "replaced_by": table["target_model"]["replaced_by"],
+                    "missing_columns": table["target_model"]["missing_columns"],
+                    "missing_constraints": table["target_model"]["missing_constraints"],
+                    "completed_by": table["signoff"]["completed_by"],
+                    "reviewed_by": table["signoff"]["reviewed_by"],
+                    "reviewed_by_business": table["signoff"]["reviewed_by_business"],
+                    "status": table["signoff"]["status"],
+                    "date_approved": serialize_date(table["signoff"]["date_approved"]),
+                    "notes": table["signoff"]["notes"],
+                    "last_synced_at": timestamp,
+                    "last_modified_by": actor_name,
+                }
+                self.client.table(self.config["tables_table"]).upsert(payload, on_conflict="table_key").execute()
 
-            self.client.table(self.config["columns_table"]).delete().eq("table_key", table_key).execute()
-            if table.get("schema"):
-                self.client.table(self.config["columns_table"]).insert(
-                    [
-                        {
-                            "table_key": table_key,
-                            "table_name": table["table_name"],
-                            "column_name": col["column_name"],
-                            "edm_type": col["edm_type"],
-                            "sql_type": col["sql_type"],
-                            "attribute_type": col.get("attribute_type", ""),
-                            "attribute_type_name": col.get("attribute_type_name", ""),
-                            "is_custom_attribute": self._coerce_bool(
-                                col.get("is_custom_attribute")
-                            ),
-                            "is_valid_odata_attribute": self._coerce_bool(
-                                col.get("is_valid_odata_attribute")
-                            ),
-                            "source_type": col.get("source_type") or None,
-                            "source_type_label": col.get("source_type_label", ""),
-                            "max_length": col.get("max_length") or None,
-                            "precision": col.get("precision") or None,
-                            "min_value": col.get("min_value", ""),
-                            "max_value": col.get("max_value", ""),
-                            "targets": col.get("targets", ""),
-                            "option_values": col.get("option_values", ""),
-                            "category": col.get("category", ""),
-                            "modeling_action": col.get("modeling_action", ""),
-                            "is_primary_id": self._coerce_bool(col.get("is_primary_id")),
-                            "is_primary_name": self._coerce_bool(col.get("is_primary_name")),
-                            "is_state_machine_candidate": self._coerce_bool(
-                                col.get("is_state_machine_candidate")
-                            ),
-                        }
-                        for col in table["schema"]
-                    ]
-                ).execute()
+                self.client.table(self.config["columns_table"]).delete().eq("table_key", table_key).execute()
+                if table.get("schema"):
+                    self.client.table(self.config["columns_table"]).insert(
+                        [
+                            {
+                                "table_key": table_key,
+                                "table_name": table["table_name"],
+                                "column_name": col["column_name"],
+                                "edm_type": col["edm_type"],
+                                "sql_type": col["sql_type"],
+                                "attribute_type": col.get("attribute_type", ""),
+                                "attribute_type_name": col.get("attribute_type_name", ""),
+                                "is_custom_attribute": self._coerce_bool(
+                                    col.get("is_custom_attribute")
+                                ),
+                                "is_valid_odata_attribute": self._coerce_bool(
+                                    col.get("is_valid_odata_attribute")
+                                ),
+                                "source_type": col.get("source_type") or None,
+                                "source_type_label": col.get("source_type_label", ""),
+                                "max_length": col.get("max_length") or None,
+                                "precision": col.get("precision") or None,
+                                "min_value": col.get("min_value", ""),
+                                "max_value": col.get("max_value", ""),
+                                "targets": col.get("targets", ""),
+                                "option_values": col.get("option_values", ""),
+                                "category": col.get("category", ""),
+                                "modeling_action": col.get("modeling_action", ""),
+                                "is_primary_id": self._coerce_bool(col.get("is_primary_id")),
+                                "is_primary_name": self._coerce_bool(col.get("is_primary_name")),
+                                "is_state_machine_candidate": self._coerce_bool(
+                                    col.get("is_state_machine_candidate")
+                                ),
+                            }
+                            for col in table["schema"]
+                        ]
+                    ).execute()
 
-            self.client.table(self.config["rel_fk_table"]).delete().eq("table_key", table_key).execute()
-            references = table.get("relationships", {}).get("references", [])
-            if references:
-                self.client.table(self.config["rel_fk_table"]).insert(
-                    [
-                        {
-                            "table_key": table_key,
-                            "table_name": table["table_name"],
-                            "fk_column": row.get("fk_column", ""),
-                            "references_table": row.get("references_table", ""),
-                            "references_column": row.get("references_column", ""),
-                            "cardinality": row.get("cardinality", ""),
-                            "mandatory": self._coerce_bool(row.get("mandatory")),
-                        }
-                        for row in references
-                    ]
-                ).execute()
+                self.client.table(self.config["rel_fk_table"]).delete().eq("table_key", table_key).execute()
+                references = table.get("relationships", {}).get("references", [])
+                if references:
+                    self.client.table(self.config["rel_fk_table"]).insert(
+                        [
+                            {
+                                "table_key": table_key,
+                                "table_name": table["table_name"],
+                                "fk_column": row.get("fk_column", ""),
+                                "references_table": row.get("references_table", ""),
+                                "references_column": row.get("references_column", ""),
+                                "cardinality": row.get("cardinality", ""),
+                                "mandatory": self._coerce_bool(row.get("mandatory")),
+                            }
+                            for row in references
+                        ]
+                    ).execute()
 
-            self.client.table(self.config["rel_ref_by_table"]).delete().eq("table_key", table_key).execute()
-            ref_by = table.get("relationships", {}).get("referenced_by", [])
-            if ref_by:
-                self.client.table(self.config["rel_ref_by_table"]).insert(
-                    [
-                        {
-                            "table_key": table_key,
-                            "table_name": table["table_name"],
-                            "referencing_table_name": row.get("table_name", ""),
-                            "via_column": row.get("via_column", ""),
-                            "cardinality": row.get("cardinality", ""),
-                        }
-                        for row in ref_by
-                    ]
-                ).execute()
+                self.client.table(self.config["rel_ref_by_table"]).delete().eq("table_key", table_key).execute()
+                ref_by = table.get("relationships", {}).get("referenced_by", [])
+                if ref_by:
+                    self.client.table(self.config["rel_ref_by_table"]).insert(
+                        [
+                            {
+                                "table_key": table_key,
+                                "table_name": table["table_name"],
+                                "referencing_table_name": row.get("table_name", ""),
+                                "via_column": row.get("via_column", ""),
+                                "cardinality": row.get("cardinality", ""),
+                            }
+                            for row in ref_by
+                        ]
+                    ).execute()
+            except APIError as exc:
+                self._raise_runtime_error(exc)
