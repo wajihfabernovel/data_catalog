@@ -61,6 +61,19 @@ def load_supabase_config() -> dict:
 class SupabaseStore:
     """Persistence wrapper around Supabase tables."""
 
+    SOURCE_TYPE_BY_LABEL = {
+        "base": 0,
+        "calculated": 1,
+        "rollup": 2,
+        "formula": 3,
+    }
+    SOURCE_TYPE_LABEL_BY_VALUE = {
+        0: "Base",
+        1: "Calculated",
+        2: "Rollup",
+        3: "Formula",
+    }
+
     def __init__(self) -> None:
         config = load_supabase_config()
         if config["missing"]:
@@ -95,6 +108,32 @@ class SupabaseStore:
         if isinstance(value, str):
             return value.strip().lower() in {"true", "yes", "1"}
         return bool(value)
+
+    @classmethod
+    def _coerce_source_type(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        text = str(value).strip()
+        if not text:
+            return None
+        if text.isdecimal() or (text.startswith("-") and text[1:].isdecimal()):
+            return int(text)
+        return cls.SOURCE_TYPE_BY_LABEL.get(text.casefold())
+
+    @classmethod
+    def _source_type_label(cls, column: dict) -> str:
+        label = str(column.get("source_type_label") or "").strip()
+        if label:
+            return label
+        source_type = cls._coerce_source_type(column.get("source_type"))
+        if source_type is not None:
+            return cls.SOURCE_TYPE_LABEL_BY_VALUE.get(source_type, "")
+        raw = str(column.get("source_type") or "").strip()
+        if raw.casefold() in cls.SOURCE_TYPE_BY_LABEL:
+            return raw
+        return ""
 
     @staticmethod
     def _schema_cache_error_message(error: APIError) -> str:
@@ -298,8 +337,8 @@ add column if not exists is_state_machine_candidate boolean;"""
                                 "is_valid_odata_attribute": self._coerce_bool(
                                     col.get("is_valid_odata_attribute")
                                 ),
-                                "source_type": col.get("source_type") or None,
-                                "source_type_label": col.get("source_type_label", ""),
+                                "source_type": self._coerce_source_type(col.get("source_type")),
+                                "source_type_label": self._source_type_label(col),
                                 "max_length": col.get("max_length") or None,
                                 "precision": col.get("precision") or None,
                                 "min_value": col.get("min_value", ""),

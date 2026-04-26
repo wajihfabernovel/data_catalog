@@ -117,7 +117,8 @@ def _merge_profile_into_catalog(profile: dict, catalog_tables: dict) -> dict:
         name = attr["column_name"]
         enrichment = {
             "attribute_type": attr.get("attribute_type", ""),
-            "source_type": attr.get("source_type_label", ""),
+            "source_type": attr.get("source_type"),
+            "source_type_label": attr.get("source_type_label", ""),
             "column_category": _CATEGORY_NORMALIZE.get(attr.get("category", ""), "SYSTEM"),
             "lookup_target": attr.get("targets", ""),
             "is_custom": bool(attr.get("is_custom_attribute", False)),
