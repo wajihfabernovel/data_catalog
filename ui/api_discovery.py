@@ -307,16 +307,16 @@ def render_api_discovery(
     st.session_state.setdefault("api_results", {})
     api_results: dict = st.session_state["api_results"]
 
+    _PREFIX = "hive_"
     fetch_mode = st.radio(
         "Fetch mode",
         ["Selected tables (from catalog)",
-         "All custom Dataverse tables (auto-discover)"],
+         f"All {_PREFIX}* Dataverse tables (auto-discover)"],
         horizontal=True,
         key="api_fetch_mode",
     )
     fetch_all = fetch_mode.startswith("All")
 
-    _PREFIX = "hive_"
     selected_keys: list[str] = []
     if not fetch_all:
         if not catalog_tables:
@@ -342,7 +342,7 @@ def render_api_discovery(
             f"{len(selected_keys)} of {len(sorted_keys)} tables selected.")
     else:
         st.info(
-            f"Will fetch all custom entity names, filter to `{_PREFIX}*` in Python, "
+            f"Will fetch only custom entity names matching `{_PREFIX}*`, "
             f"then run 5 API calls per matching table (base attrs · lookup · string · picklist · decimal). "
             f"Global relationship graph is skipped for performance."
         )
