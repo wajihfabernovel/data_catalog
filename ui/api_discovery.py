@@ -384,15 +384,17 @@ def render_api_discovery(
         results: dict = {}
 
         if fetch_all:
-            with st.status("Fetching all custom Dataverse tables…", expanded=True) as s:
+            with st.status(f"Fetching '{_PREFIX}*' Dataverse tables…", expanded=True) as s:
                 st.write(
-                    "Calling `EntityDefinitions?$filter=IsCustomEntity eq true` + relationship graph…")
+                    f"Calling `EntityDefinitions?$filter=IsCustomEntity eq true "
+                    f"and startswith(LogicalName,'{_PREFIX}')` …"
+                )
                 try:
-                    profiles = client.fetch_all_custom_entities()
+                    profiles = client.fetch_all_custom_entities(name_prefix=_PREFIX)
                     for p in profiles:
                         results[p["table_key"]] = p
                     s.update(
-                        label=f"Done — {len(profiles)} custom tables fetched.", state="complete")
+                        label=f"Done — {len(profiles)} '{_PREFIX}*' tables fetched.", state="complete")
                 except Exception as exc:
                     s.update(label="Fetch failed", state="error")
                     st.error(str(exc))
