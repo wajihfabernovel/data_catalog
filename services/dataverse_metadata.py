@@ -200,7 +200,10 @@ class DataverseMetadataClient:
         )
         return payload.get("value", [])
 
-    def _fetch_all_custom_entities_expanded(self) -> list[dict[str, Any]]:
+    def _fetch_all_custom_entities_expanded(self, name_prefix: str | None = None) -> list[dict[str, Any]]:
+        filter_clause = "IsCustomEntity eq true"
+        if name_prefix:
+            filter_clause += f" and startswith(LogicalName,'{name_prefix}')"
         payload = self._get(
             "EntityDefinitions",
             params={
@@ -210,7 +213,7 @@ class DataverseMetadataClient:
                     "LogicalName,DisplayName,AttributeType,AttributeTypeName,IsPrimaryId,"
                     "IsPrimaryName,IsCustomAttribute,IsValidODataAttribute,IsLogical,RequiredLevel,SourceType)"
                 ),
-                "$filter": "IsCustomEntity eq true",
+                "$filter": filter_clause,
             },
         )
         return payload.get("value", [])
@@ -460,25 +463,37 @@ class DataverseMetadataClient:
         ]
 
     def fetch_all_custom_entities(self, name_prefix: str | None = None) -> list[dict[str, Any]]:
-        expanded = self._fetch_all_custom_entities_expanded()
+        # When a prefix is given, push it into the OData filter so the server returns only matching
+        # entities — avoids downloading attributes for all 1800+ custom tables.
+        expanded = self._fetch_all_custom_entities_expanded(name_prefix=name_prefix)
         entities: list[dict[str, Any]] = []
-        # entity_names stays the full custom-entity set so FK reference filtering is accurate
-        entity_names = {
+
+        if name_prefix:
+            # Lightweight call for the full custom-entity set — needed for accurate FK filtering
+            # without having to download all expanded attribute payloads.
+            entity_names = self._fetch_custom_entity_names()
+        else:
+            entity_names = {
+                self._safe_value(row.get("LogicalName"))
+                for row in expanded
+                if self._safe_value(row.get("LogicalName"))
+            }
+
+        target_names = {
             self._safe_value(row.get("LogicalName"))
             for row in expanded
             if self._safe_value(row.get("LogicalName"))
         }
-        # rows_to_process is limited to the requested prefix (avoids N×4 API calls for excluded tables)
-        rows_to_process = [
-            row for row in expanded
-            if not name_prefix
-            or self._safe_value(row.get("LogicalName")).startswith(name_prefix)
-        ]
-        target_names = {self._safe_value(row.get("LogicalName")) for row in rows_to_process}
         referenced_by: dict[str, list[dict[str, Any]]] = defaultdict(list)
         many_to_many_by_entity: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        one_to_many_rows = self._fetch_one_to_many_relationships()
-        many_to_many_rows = self._fetch_many_to_many_relationships()
+        # Global relationship graph is expensive (~thousands of rows). Skip when filtering by
+        # prefix — attribute-level Lookup data in _build_entity_profile already captures FK edges.
+        if name_prefix:
+            one_to_many_rows: list[dict[str, Any]] = []
+            many_to_many_rows: list[dict[str, Any]] = []
+        else:
+            one_to_many_rows = self._fetch_one_to_many_relationships()
+            many_to_many_rows = self._fetch_many_to_many_relationships()
 
         for row in rows_to_process:
             table_name = self._safe_value(row.get("LogicalName"))
