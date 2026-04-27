@@ -32,6 +32,39 @@ class SupabaseStoreTests(unittest.TestCase):
         self.assertIn("alter table if exists catalog_tables", message)
         self.assertIn("add column if not exists metadata_profile_json text", message)
 
+    def test_fetch_all_rows_converts_postgrest_errors_to_runtime_errors(self):
+        error = APIError(
+            {
+                "message": "relation journeys does not exist",
+                "code": "42P01",
+                "hint": None,
+                "details": None,
+            }
+        )
+
+        class FailingQuery:
+            def select(self, *_args):
+                return self
+
+            def range(self, *_args):
+                return self
+
+            def execute(self):
+                raise error
+
+        class FailingClient:
+            def table(self, _table_name):
+                return FailingQuery()
+
+        store = object.__new__(SupabaseStore)
+        store.client = FailingClient()
+
+        with self.assertRaises(RuntimeError) as context:
+            store._fetch_all_rows("journeys")
+
+        self.assertIn("relation journeys does not exist", str(context.exception))
+        self.assertIn("supabase_journey_mapping_migration.sql", str(context.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -44,6 +44,13 @@ Create these tables:
 - `catalog_columns`
 - `catalog_relationships_fk`
 - `catalog_relationships_referenced_by`
+- `journeys`
+- `journey_steps`
+- `journey_step_tables`
+- `state_transitions`
+
+Run `supabase_catalog_metadata_migration.sql` for Dataverse API metadata columns and
+`supabase_journey_mapping_migration.sql` for the journey mapping tables.
 
 ## Configuration
 

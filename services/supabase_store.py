@@ -73,6 +73,12 @@ class SupabaseStore:
         2: "Rollup",
         3: "Formula",
     }
+    JOURNEY_TABLE_NAMES = {
+        "journeys",
+        "journey_steps",
+        "journey_step_tables",
+        "state_transitions",
+    }
 
     def __init__(self) -> None:
         config = load_supabase_config()
@@ -85,14 +91,17 @@ class SupabaseStore:
         rows: list[dict] = []
         start = 0
         while True:
-            batch = (
-                self.client.table(table_name)
-                .select("*")
-                .range(start, start + page_size - 1)
-                .execute()
-                .data
-                or []
-            )
+            try:
+                batch = (
+                    self.client.table(table_name)
+                    .select("*")
+                    .range(start, start + page_size - 1)
+                    .execute()
+                    .data
+                    or []
+                )
+            except APIError as exc:
+                self._raise_runtime_error(exc)
             rows.extend(batch)
             if len(batch) < page_size:
                 break
@@ -167,9 +176,23 @@ add column if not exists is_state_machine_candidate boolean;"""
         )
 
     @classmethod
+    def _missing_relation_error_message(cls, error: APIError) -> str:
+        return (
+            "Supabase is missing a table required by User Journey Mapping. "
+            f"PostgREST returned: {error.message}\n\n"
+            "Run supabase_journey_mapping_migration.sql in the Supabase SQL editor, "
+            "then reload the app."
+        )
+
+    @classmethod
     def _raise_runtime_error(cls, error: APIError) -> None:
         if getattr(error, "code", "") == "PGRST204":
             raise RuntimeError(cls._schema_cache_error_message(error)) from error
+        message = getattr(error, "message", "")
+        if getattr(error, "code", "") in {"42P01", "PGRST205"} and any(
+            table_name in message for table_name in cls.JOURNEY_TABLE_NAMES
+        ):
+            raise RuntimeError(cls._missing_relation_error_message(error)) from error
         raise RuntimeError(str(error)) from error
 
     def fetch_catalog_state(self) -> dict[str, dict]:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date, datetime
 from pathlib import Path
 
@@ -24,6 +25,15 @@ load_dotenv()
 STYLE_PATH = Path(__file__).parent / "assets" / "styles.css"
 EXPORT_DIR = Path(__file__).parent / "exports"
 TABLE_PREFIX = "hive_"
+APP_SECTIONS = (
+    "Input & Sync",
+    "API Discovery",
+    "Catalog",
+    "Relationships",
+    "Modeling Summary",
+    "Batch",
+    "User Journey Mapping",
+)
 
 
 def _prefix_filter(catalog: dict) -> dict:
@@ -120,6 +130,30 @@ def refresh_from_database(show_message: bool = False) -> None:
 
 def _has_missing_schema(catalog_tables: dict) -> bool:
     return any(not table.get("schema") for table in catalog_tables.values())
+
+
+def _load_catalog_tables_for_views() -> dict:
+    catalog_tables = _prefix_filter(st.session_state.get("catalog_tables", {}))
+    if catalog_tables and not _has_missing_schema(catalog_tables):
+        return catalog_tables
+
+    try:
+        refresh_from_database(show_message=False)
+    except (RuntimeError, SupabaseConfigError) as exc:
+        if catalog_tables:
+            st.warning(str(exc))
+            return catalog_tables
+        st.error(str(exc))
+        return {}
+
+    return _prefix_filter(st.session_state.get("catalog_tables", {}))
+
+
+def _render_selected_section(section: str, renderers: dict[str, Callable[[], None]]) -> None:
+    renderer = renderers.get(section)
+    if renderer is None:
+        raise ValueError(f"Unknown app section: {section}")
+    renderer()
 
 
 def _column_bucket(column_count: int) -> str:
@@ -396,14 +430,7 @@ def table_export(updated_table: dict) -> None:
 
 
 def render_catalog_section() -> None:
-    catalog_tables = _prefix_filter(st.session_state.get("catalog_tables", {}))
-    if not catalog_tables or _has_missing_schema(catalog_tables):
-        try:
-            refresh_from_database(show_message=False)
-            catalog_tables = _prefix_filter(st.session_state.get("catalog_tables", {}))
-        except (RuntimeError, SupabaseConfigError):
-            catalog_tables = {}
-
+    catalog_tables = _load_catalog_tables_for_views()
     if not catalog_tables:
         st.info("No catalog data is loaded yet. Use Input & Sync to parse metadata or refresh from Supabase.")
         return
@@ -500,9 +527,9 @@ def render_sidebar_help() -> None:
 
 
 def render_batch_section() -> None:
-    catalog_tables = _prefix_filter(st.session_state.get("catalog_tables", {}))
+    catalog_tables = _load_catalog_tables_for_views()
     if not catalog_tables:
-        st.info("No tables loaded yet. Use the Input & Sync tab to parse metadata first.")
+        st.info("No tables loaded yet. Use Input & Sync or API Discovery to load metadata first.")
         return
 
     st.caption(
@@ -611,7 +638,7 @@ def _relationship_dot(visible_tables: dict[str, dict]) -> str:
 
 
 def render_relationships_section() -> None:
-    catalog_tables = _prefix_filter(st.session_state.get("catalog_tables", {}))
+    catalog_tables = _load_catalog_tables_for_views()
     if not catalog_tables:
         st.info("No catalog data is loaded yet. Fetch Dataverse metadata first.")
         return
@@ -697,7 +724,7 @@ def render_relationships_section() -> None:
 
 
 def render_modeling_summary_section() -> None:
-    catalog_tables = _prefix_filter(st.session_state.get("catalog_tables", {}))
+    catalog_tables = _load_catalog_tables_for_views()
     if not catalog_tables:
         st.info("No catalog data is loaded yet. Fetch Dataverse metadata first.")
         return
@@ -809,33 +836,45 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    tab_input, tab_api, tab_catalog, tab_relationships, tab_modeling, tab_batch, tab_journeys = st.tabs(
-        ["Input & Sync", "API Discovery", "Catalog", "Relationships",
-         "Modeling Summary", "Batch", "User Journey Mapping"]
-    )
-    with tab_input:
-        render_input_section()
-    with tab_api:
-        def _on_api_merge(updated_tables: dict) -> None:
-            st.session_state["catalog_tables"] = updated_tables
+    if hasattr(st, "segmented_control"):
+        selected_section = st.segmented_control(
+            "Section",
+            APP_SECTIONS,
+            default=APP_SECTIONS[0],
+            label_visibility="collapsed",
+            key="active_section",
+        )
+    else:
+        selected_section = st.radio(
+            "Section",
+            APP_SECTIONS,
+            horizontal=True,
+            label_visibility="collapsed",
+            key="active_section",
+        )
+    selected_section = selected_section or APP_SECTIONS[0]
 
-        render_api_discovery(
-            st.session_state.get("catalog_tables", {}),
-            on_merge=_on_api_merge,
-        )
-    with tab_catalog:
-        render_catalog_section()
-    with tab_relationships:
-        render_relationships_section()
-    with tab_modeling:
-        render_modeling_summary_section()
-    with tab_batch:
-        render_batch_section()
-    with tab_journeys:
-        render_journey_mapping(
-            st.session_state.get("catalog_tables") or st.session_state.get("database_snapshot", {}),
-            current_actor_name(),
-        )
+    def _on_api_merge(updated_tables: dict) -> None:
+        st.session_state["catalog_tables"] = updated_tables
+
+    _render_selected_section(
+        selected_section,
+        {
+            "Input & Sync": render_input_section,
+            "API Discovery": lambda: render_api_discovery(
+                st.session_state.get("catalog_tables", {}),
+                on_merge=_on_api_merge,
+            ),
+            "Catalog": render_catalog_section,
+            "Relationships": render_relationships_section,
+            "Modeling Summary": render_modeling_summary_section,
+            "Batch": render_batch_section,
+            "User Journey Mapping": lambda: render_journey_mapping(
+                _load_catalog_tables_for_views(),
+                current_actor_name(),
+            ),
+        },
+    )
 
 
 if __name__ == "__main__":

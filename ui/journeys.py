@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,13 @@ from utils.helpers import (
 
 
 EXPORT_DIR = Path(__file__).resolve().parent.parent / "exports"
+JOURNEY_SECTIONS = (
+    "Capture Journey",
+    "View Journeys",
+    "Table Analysis",
+    "State Machines",
+    "Export Data",
+)
 
 
 def _blank_transition(trigger_action: str = "") -> dict[str, str]:
@@ -66,6 +74,13 @@ def _journey_store() -> JourneysStore | None:
     except (RuntimeError, SupabaseConfigError) as exc:
         st.error(str(exc))
         return None
+
+
+def _render_selected_journey_section(section: str, renderers: dict[str, Callable[[], None]]) -> None:
+    renderer = renderers.get(section)
+    if renderer is None:
+        raise ValueError(f"Unknown journey section: {section}")
+    renderer()
 
 
 def _ensure_editor_state(existing_journeys: list[dict[str, Any]]) -> None:
@@ -744,19 +759,47 @@ def render_journey_mapping(catalog_tables: dict[str, dict], actor_name: str) -> 
         "status-field transitions per entity, then analyse table hotspots and export the full picture "
         "as an Excel workbook or state-machine JSON for developer handoff."
     )
-    existing_journeys = store.fetch_journeys()
+    try:
+        existing_journeys = store.fetch_journeys()
+    except RuntimeError as exc:
+        st.error(str(exc))
+        return
     _ensure_editor_state(existing_journeys)
 
-    tab_capture, tab_view, tab_analysis, tab_state, tab_export = st.tabs(
-        ["Capture Journey", "View Journeys", "Table Analysis", "State Machines", "Export Data"]
-    )
-    with tab_capture:
-        _render_capture_page(store, catalog_tables, existing_journeys, actor_name)
-    with tab_view:
-        _render_view_page(store, existing_journeys)
-    with tab_analysis:
-        _render_analysis_page(store, catalog_tables, existing_journeys)
-    with tab_state:
-        _render_state_machine_page(store)
-    with tab_export:
-        _render_export_page(store, catalog_tables, existing_journeys, actor_name)
+    if hasattr(st, "segmented_control"):
+        selected_section = st.segmented_control(
+            "Journey section",
+            JOURNEY_SECTIONS,
+            default=JOURNEY_SECTIONS[0],
+            label_visibility="collapsed",
+            key="journey_active_section",
+        )
+    else:
+        selected_section = st.radio(
+            "Journey section",
+            JOURNEY_SECTIONS,
+            horizontal=True,
+            label_visibility="collapsed",
+            key="journey_active_section",
+        )
+    selected_section = selected_section or JOURNEY_SECTIONS[0]
+
+    try:
+        _render_selected_journey_section(
+            selected_section,
+            {
+                "Capture Journey": lambda: _render_capture_page(
+                    store, catalog_tables, existing_journeys, actor_name
+                ),
+                "View Journeys": lambda: _render_view_page(store, existing_journeys),
+                "Table Analysis": lambda: _render_analysis_page(
+                    store, catalog_tables, existing_journeys
+                ),
+                "State Machines": lambda: _render_state_machine_page(store),
+                "Export Data": lambda: _render_export_page(
+                    store, catalog_tables, existing_journeys, actor_name
+                ),
+            },
+        )
+    except RuntimeError as exc:
+        st.error(str(exc))
