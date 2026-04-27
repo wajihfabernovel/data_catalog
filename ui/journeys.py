@@ -30,6 +30,9 @@ from utils.helpers import (
 
 
 EXPORT_DIR = Path(__file__).resolve().parent.parent / "exports"
+VIEW_EDITOR_PREFIX = "journey_view_editor"
+VIEW_STEP_PREFIX = "journey_view_step"
+VIEW_STEPS_KEY = "journey_view_steps"
 JOURNEY_SECTIONS = (
     "Capture Journey",
     "View Journeys",
@@ -83,6 +86,16 @@ def _render_selected_journey_section(section: str, renderers: dict[str, Callable
     renderer()
 
 
+def _clear_session_keys(*prefixes: str) -> None:
+    keys_to_clear = [
+        key
+        for key in st.session_state.keys()
+        if any(key.startswith(prefix) for prefix in prefixes)
+    ]
+    for key in keys_to_clear:
+        st.session_state.pop(key, None)
+
+
 def _ensure_editor_state(existing_journeys: list[dict[str, Any]]) -> None:
     st.session_state.setdefault("journey_editor_loaded_id", "")
     st.session_state.setdefault("journey_editor_analysis_annotations", {})
@@ -101,9 +114,7 @@ def _ensure_editor_state(existing_journeys: list[dict[str, Any]]) -> None:
 
 
 def _reset_editor(existing_journeys: list[dict[str, Any]]) -> None:
-    keys_to_clear = [key for key in st.session_state.keys() if key.startswith("journey_step_")]
-    for key in keys_to_clear:
-        st.session_state.pop(key)
+    _clear_session_keys("journey_step_")
     st.session_state["journey_editor_loaded_id"] = ""
     st.session_state["journey_editor_journey_id"] = next_journey_id([j["journey_id"] for j in existing_journeys])
     st.session_state["journey_editor_journey_name"] = ""
@@ -116,44 +127,34 @@ def _reset_editor(existing_journeys: list[dict[str, Any]]) -> None:
     st.session_state["journey_editor_steps"] = [_blank_step(1)]
 
 
-def _load_editor(journey: dict[str, Any], existing_journeys: list[dict[str, Any]]) -> None:
-    _reset_editor(existing_journeys)
-    st.session_state["journey_editor_loaded_id"] = journey["journey_id"]
-    st.session_state["journey_editor_journey_id"] = journey["journey_id"]
-    st.session_state["journey_editor_journey_name"] = journey.get("journey_name", "")
-    st.session_state["journey_editor_module_domain"] = journey.get("module_domain") or JOURNEY_MODULE_OPTIONS[0]
-    stored_roles = journey.get("primary_user_role", "")
-    st.session_state["journey_editor_user_roles"] = [role.strip() for role in stored_roles.split(",") if role.strip()]
-    st.session_state["journey_editor_frequency"] = journey.get("frequency") or JOURNEY_FREQUENCY_OPTIONS[0]
-    st.session_state["journey_editor_complexity"] = journey.get("complexity") or JOURNEY_COMPLEXITY_OPTIONS[0]
-    interview_date = journey.get("interview_date")
-    st.session_state["journey_editor_interview_date"] = (
-        date.fromisoformat(interview_date) if interview_date else date.today()
-    )
-    st.session_state["journey_editor_interviewer"] = journey.get("interviewer", "Wajih")
+def _parse_journey_date(value: Any) -> date:
+    if isinstance(value, date):
+        return value
+    if value:
+        return date.fromisoformat(str(value))
+    return date.today()
 
+
+def _journey_to_editor_steps(journey: dict[str, Any]) -> list[dict[str, Any]]:
     steps_payload: list[dict[str, Any]] = []
     for step in sorted(journey.get("steps", []), key=lambda item: item["step_number"]):
         step_number = int(step["step_number"])
-        reads = [ref["table_name"] for ref in step.get("table_refs", []) if ref.get("access_mode") == "READ"]
-        writes = [ref for ref in step.get("table_refs", []) if ref.get("access_mode") == "WRITE"]
+        table_refs = step.get("table_refs", [])
+        catalog_read_tables = [
+            ref["table_name"]
+            for ref in table_refs
+            if ref.get("access_mode") == "READ" and ref.get("is_catalog_table")
+        ]
+        reads = [ref["table_name"] for ref in table_refs if ref.get("access_mode") == "READ"]
+        writes = [ref for ref in table_refs if ref.get("access_mode") == "WRITE"]
         transitions = step.get("transitions", [])
         steps_payload.append(
             {
                 "step_number": step_number,
                 "user_action": step.get("user_action", ""),
                 "screen_component": step.get("screen_component", ""),
-                "tables_read_known": [
-                    ref["table_name"] for ref in step.get("table_refs", [])
-                    if ref.get("access_mode") == "READ" and ref.get("is_catalog_table")
-                ],
-                "tables_read_extra": ", ".join([
-                    name for name in reads
-                    if name not in [
-                        ref["table_name"] for ref in step.get("table_refs", [])
-                        if ref.get("access_mode") == "READ" and ref.get("is_catalog_table")
-                    ]
-                ]),
+                "tables_read_known": catalog_read_tables,
+                "tables_read_extra": ", ".join([name for name in reads if name not in catalog_read_tables]),
                 "tables_written_known": [
                     ref["table_name"] for ref in writes if ref.get("is_catalog_table")
                 ],
@@ -181,7 +182,40 @@ def _load_editor(journey: dict[str, Any], existing_journeys: list[dict[str, Any]
                 },
             }
         )
-    st.session_state["journey_editor_steps"] = steps_payload or [_blank_step(1)]
+    return steps_payload or [_blank_step(1)]
+
+
+def _set_journey_editor_state(journey: dict[str, Any], editor_prefix: str, steps_key: str) -> None:
+    st.session_state[f"{editor_prefix}_journey_id"] = journey["journey_id"]
+    st.session_state[f"{editor_prefix}_journey_name"] = journey.get("journey_name", "")
+    st.session_state[f"{editor_prefix}_module_domain"] = journey.get("module_domain") or JOURNEY_MODULE_OPTIONS[0]
+    stored_roles = journey.get("primary_user_role", "")
+    st.session_state[f"{editor_prefix}_user_roles"] = [
+        role.strip() for role in stored_roles.split(",") if role.strip()
+    ]
+    st.session_state[f"{editor_prefix}_frequency"] = journey.get("frequency") or JOURNEY_FREQUENCY_OPTIONS[0]
+    st.session_state[f"{editor_prefix}_complexity"] = journey.get("complexity") or JOURNEY_COMPLEXITY_OPTIONS[0]
+    interview_date = journey.get("interview_date")
+    st.session_state[f"{editor_prefix}_interview_date"] = _parse_journey_date(interview_date)
+    st.session_state[f"{editor_prefix}_interviewer"] = journey.get("interviewer", "Wajih")
+    st.session_state[steps_key] = _journey_to_editor_steps(journey)
+
+
+def _load_editor(journey: dict[str, Any], existing_journeys: list[dict[str, Any]]) -> None:
+    _reset_editor(existing_journeys)
+    st.session_state["journey_editor_loaded_id"] = journey["journey_id"]
+    _set_journey_editor_state(journey, "journey_editor", "journey_editor_steps")
+
+
+def _clear_view_editor() -> None:
+    _clear_session_keys(f"{VIEW_STEP_PREFIX}_", f"{VIEW_EDITOR_PREFIX}_")
+    st.session_state.pop("journey_view_editing_id", None)
+
+
+def _load_view_editor(journey: dict[str, Any]) -> None:
+    _clear_view_editor()
+    st.session_state["journey_view_editing_id"] = journey["journey_id"]
+    _set_journey_editor_state(journey, VIEW_EDITOR_PREFIX, VIEW_STEPS_KEY)
 
 
 def _catalog_names(catalog_tables: dict[str, dict]) -> list[str]:
@@ -191,8 +225,8 @@ def _catalog_names(catalog_tables: dict[str, dict]) -> list[str]:
     )
 
 
-def _seed_step_widget_defaults(step: dict[str, Any], idx: int) -> None:
-    prefix = f"journey_step_{idx}"
+def _seed_step_widget_defaults(step: dict[str, Any], idx: int, step_key_prefix: str = "journey_step") -> None:
+    prefix = f"{step_key_prefix}_{idx}"
     st.session_state.setdefault(f"{prefix}_step_number", step["step_number"])
     st.session_state.setdefault(f"{prefix}_user_action", step.get("user_action", ""))
     st.session_state.setdefault(f"{prefix}_screen_component", step.get("screen_component", ""))
@@ -222,22 +256,25 @@ def _seed_step_widget_defaults(step: dict[str, Any], idx: int) -> None:
         st.session_state.setdefault(f"{prefix}_write_op_{table_name}", operation)
 
 
-def _collect_editor_payload(
+def _collect_journey_payload_from_state(
     catalog_tables: dict[str, dict],
+    editor_key_prefix: str,
+    step_key_prefix: str,
+    steps_state_key: str,
 ) -> tuple[
     dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[str]
 ]:
     journey = {
-        "journey_id": st.session_state.get("journey_editor_journey_id", "").strip(),
-        "journey_name": st.session_state.get("journey_editor_journey_name", "").strip(),
-        "module_domain": st.session_state.get("journey_editor_module_domain", "").strip(),
-        "primary_user_role": ", ".join(st.session_state.get("journey_editor_user_roles", [])),
-        "frequency": st.session_state.get("journey_editor_frequency", "").strip(),
-        "complexity": st.session_state.get("journey_editor_complexity", "").strip(),
-        "interview_date": st.session_state.get("journey_editor_interview_date").isoformat()
-        if st.session_state.get("journey_editor_interview_date")
+        "journey_id": st.session_state.get(f"{editor_key_prefix}_journey_id", "").strip(),
+        "journey_name": st.session_state.get(f"{editor_key_prefix}_journey_name", "").strip(),
+        "module_domain": st.session_state.get(f"{editor_key_prefix}_module_domain", "").strip(),
+        "primary_user_role": ", ".join(st.session_state.get(f"{editor_key_prefix}_user_roles", [])),
+        "frequency": st.session_state.get(f"{editor_key_prefix}_frequency", "").strip(),
+        "complexity": st.session_state.get(f"{editor_key_prefix}_complexity", "").strip(),
+        "interview_date": st.session_state.get(f"{editor_key_prefix}_interview_date").isoformat()
+        if st.session_state.get(f"{editor_key_prefix}_interview_date")
         else "",
-        "interviewer": st.session_state.get("journey_editor_interviewer", "").strip(),
+        "interviewer": st.session_state.get(f"{editor_key_prefix}_interviewer", "").strip(),
         "scrum_team": "",
     }
     errors: list[str] = []
@@ -257,11 +294,11 @@ def _collect_editor_payload(
         for table in catalog_tables.values()
         if table.get("table_name")
     }
-    editor_steps = st.session_state.get("journey_editor_steps", [])
+    editor_steps = st.session_state.get(steps_state_key, [])
     seen_step_numbers: set[int] = set()
 
     for idx, _ in enumerate(editor_steps):
-        prefix = f"journey_step_{idx}"
+        prefix = f"{step_key_prefix}_{idx}"
         step_number = int(st.session_state.get(f"{prefix}_step_number", idx + 1))
         user_action = st.session_state.get(f"{prefix}_user_action", "").strip()
         if step_number in seen_step_numbers:
@@ -345,6 +382,42 @@ def _collect_editor_payload(
     return journey, sorted(steps, key=lambda item: item["step_number"]), step_tables, transitions, errors
 
 
+def _collect_editor_payload(
+    catalog_tables: dict[str, dict],
+) -> tuple[
+    dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[str]
+]:
+    return _collect_journey_payload_from_state(
+        catalog_tables,
+        "journey_editor",
+        "journey_step",
+        "journey_editor_steps",
+    )
+
+
+def _save_view_editor_journey(
+    store: JourneysStore,
+    catalog_tables: dict[str, dict],
+    actor_name: str,
+) -> list[str]:
+    journey, payload_steps, step_tables, transitions, errors = _collect_journey_payload_from_state(
+        catalog_tables,
+        VIEW_EDITOR_PREFIX,
+        VIEW_STEP_PREFIX,
+        VIEW_STEPS_KEY,
+    )
+    if errors:
+        return errors
+    store.save_journey(
+        journey=journey,
+        steps=payload_steps,
+        step_tables=step_tables,
+        transitions=transitions,
+        actor_name=actor_name,
+    )
+    return []
+
+
 def _build_graphviz_network(edges: list[tuple[str, str, str]]) -> str:
     lines = ["graph tables {", '  rankdir="LR";', '  node [shape=box, style="rounded,filled", fillcolor="#f7f7f7"];']
     seen_nodes: set[str] = set()
@@ -381,38 +454,16 @@ def _build_state_machine_dot(transitions: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _render_capture_page(
-    store: JourneysStore,
+def _render_steps_editor(
     catalog_tables: dict[str, dict],
-    existing_journeys: list[dict[str, Any]],
-    actor_name: str,
+    steps_state_key: str,
+    step_key_prefix: str,
 ) -> None:
-    _ensure_editor_state(existing_journeys)
-    st.subheader("Capture Journey")
-    st.caption(
-        "Define a new journey or edit an existing one. Fill in the metadata (module, role, frequency), "
-        "add numbered steps describing what the user does and which table/action is involved, then record "
-        "status-field transitions triggered along the way. Save to Supabase when ready."
-    )
-    meta_left, meta_right = st.columns(2)
-    with meta_left:
-        st.text_input("Journey ID", key="journey_editor_journey_id")
-        st.text_input("Journey Name", key="journey_editor_journey_name")
-        st.selectbox("Module/Domain", JOURNEY_MODULE_OPTIONS, key="journey_editor_module_domain")
-        st.multiselect("User Role", JOURNEY_ROLE_OPTIONS, key="journey_editor_user_roles")
-    with meta_right:
-        st.selectbox("Frequency", JOURNEY_FREQUENCY_OPTIONS, key="journey_editor_frequency")
-        st.selectbox("Complexity", JOURNEY_COMPLEXITY_OPTIONS, key="journey_editor_complexity")
-        st.date_input("Interview Date", key="journey_editor_interview_date")
-        st.text_input("Interviewer", key="journey_editor_interviewer")
-
-    st.divider()
-    st.markdown("### Journey Steps")
     catalog_names = _catalog_names(catalog_tables)
-    steps = st.session_state.get("journey_editor_steps", [])
+    steps = st.session_state.get(steps_state_key, [])
     for idx, step in enumerate(steps):
-        _seed_step_widget_defaults(step, idx)
-        prefix = f"journey_step_{idx}"
+        _seed_step_widget_defaults(step, idx, step_key_prefix)
+        prefix = f"{step_key_prefix}_{idx}"
         header = st.session_state.get(f"{prefix}_user_action") or f"Step {idx + 1}"
         with st.expander(f"Step {idx + 1}: {header}", expanded=idx == len(steps) - 1):
             row_cols = st.columns([1, 3, 3])
@@ -478,11 +529,42 @@ def _render_capture_page(
                     item["step_number"] = new_idx
                 if not steps:
                     steps.append(_blank_step(1))
-                st.session_state["journey_editor_steps"] = steps
+                st.session_state[steps_state_key] = steps
                 st.rerun()
+
+
+def _render_capture_page(
+    store: JourneysStore,
+    catalog_tables: dict[str, dict],
+    existing_journeys: list[dict[str, Any]],
+    actor_name: str,
+) -> None:
+    _ensure_editor_state(existing_journeys)
+    st.subheader("Capture Journey")
+    st.caption(
+        "Define a new journey or edit an existing one. Fill in the metadata (module, role, frequency), "
+        "add numbered steps describing what the user does and which table/action is involved, then record "
+        "status-field transitions triggered along the way. Save to Supabase when ready."
+    )
+    meta_left, meta_right = st.columns(2)
+    with meta_left:
+        st.text_input("Journey ID", key="journey_editor_journey_id")
+        st.text_input("Journey Name", key="journey_editor_journey_name")
+        st.selectbox("Module/Domain", JOURNEY_MODULE_OPTIONS, key="journey_editor_module_domain")
+        st.multiselect("User Role", JOURNEY_ROLE_OPTIONS, key="journey_editor_user_roles")
+    with meta_right:
+        st.selectbox("Frequency", JOURNEY_FREQUENCY_OPTIONS, key="journey_editor_frequency")
+        st.selectbox("Complexity", JOURNEY_COMPLEXITY_OPTIONS, key="journey_editor_complexity")
+        st.date_input("Interview Date", key="journey_editor_interview_date")
+        st.text_input("Interviewer", key="journey_editor_interviewer")
+
+    st.divider()
+    st.markdown("### Journey Steps")
+    _render_steps_editor(catalog_tables, "journey_editor_steps", "journey_step")
 
     action_cols = st.columns([1, 1, 2])
     if action_cols[0].button("Add Step", use_container_width=True):
+        steps = st.session_state.get("journey_editor_steps", [])
         steps.append(_blank_step(len(steps) + 1))
         st.session_state["journey_editor_steps"] = steps
         st.rerun()
@@ -505,12 +587,64 @@ def _render_capture_page(
             st.rerun()
 
 
-def _render_view_page(store: JourneysStore, existing_journeys: list[dict[str, Any]]) -> None:
+def _render_view_editor(
+    store: JourneysStore,
+    catalog_tables: dict[str, dict],
+    selected_journey: dict[str, Any],
+    actor_name: str,
+) -> None:
+    st.markdown("### Edit Journey")
+    st.caption("Modify the saved journey steps, table actions, and status transitions, then save changes.")
+    meta_left, meta_right = st.columns(2)
+    with meta_left:
+        st.text_input("Journey ID", key=f"{VIEW_EDITOR_PREFIX}_journey_id", disabled=True)
+        st.text_input("Journey Name", key=f"{VIEW_EDITOR_PREFIX}_journey_name")
+        st.selectbox("Module/Domain", JOURNEY_MODULE_OPTIONS, key=f"{VIEW_EDITOR_PREFIX}_module_domain")
+        st.multiselect("User Role", JOURNEY_ROLE_OPTIONS, key=f"{VIEW_EDITOR_PREFIX}_user_roles")
+    with meta_right:
+        st.selectbox("Frequency", JOURNEY_FREQUENCY_OPTIONS, key=f"{VIEW_EDITOR_PREFIX}_frequency")
+        st.selectbox("Complexity", JOURNEY_COMPLEXITY_OPTIONS, key=f"{VIEW_EDITOR_PREFIX}_complexity")
+        st.date_input("Interview Date", key=f"{VIEW_EDITOR_PREFIX}_interview_date")
+        st.text_input("Interviewer", key=f"{VIEW_EDITOR_PREFIX}_interviewer")
+
+    st.divider()
+    st.markdown("### Journey Steps")
+    _render_steps_editor(catalog_tables, VIEW_STEPS_KEY, VIEW_STEP_PREFIX)
+
+    action_cols = st.columns([1, 1, 2])
+    if action_cols[0].button("Add Step", key="journey_view_add_step", use_container_width=True):
+        steps = st.session_state.get(VIEW_STEPS_KEY, [])
+        steps.append(_blank_step(len(steps) + 1))
+        st.session_state[VIEW_STEPS_KEY] = steps
+        st.rerun()
+    if action_cols[1].button("Cancel", key="journey_view_cancel_edit", use_container_width=True):
+        _clear_view_editor()
+        st.rerun()
+    if action_cols[2].button("Save modifications", key="journey_view_save", type="primary", use_container_width=True):
+        errors = _save_view_editor_journey(store, catalog_tables, actor_name)
+        if errors:
+            for error in errors:
+                st.error(error)
+            return
+        st.session_state["journey_view_notice"] = f"Journey {selected_journey['journey_id']} updated."
+        _clear_view_editor()
+        st.rerun()
+
+
+def _render_view_page(
+    store: JourneysStore,
+    catalog_tables: dict[str, dict],
+    existing_journeys: list[dict[str, Any]],
+    actor_name: str,
+) -> None:
     st.subheader("View Journeys")
     st.caption(
         "Browse all saved journeys. Filter by module, frequency, or complexity, then expand any journey "
         "to inspect its full step sequence, involved tables, and associated state transitions."
     )
+    notice = st.session_state.pop("journey_view_notice", "")
+    if notice:
+        st.success(notice)
     if not existing_journeys:
         st.info("No journeys have been captured yet.")
         return
@@ -543,6 +677,9 @@ def _render_view_page(store: JourneysStore, existing_journeys: list[dict[str, An
         ]
     if complexity_filter:
         filtered_df = filtered_df[filtered_df["complexity"].isin(complexity_filter)]
+    if filtered_df.empty:
+        st.info("No journeys match the current filters.")
+        return
 
     st.dataframe(
         filtered_df[
@@ -567,6 +704,10 @@ def _render_view_page(store: JourneysStore, existing_journeys: list[dict[str, An
     if not selected_journey:
         return
     st.markdown(f"### {selected_journey['journey_name']}")
+    if st.session_state.get("journey_view_editing_id") == selected_journey_id:
+        _render_view_editor(store, catalog_tables, selected_journey, actor_name)
+        return
+
     for step in selected_journey.get("steps", []):
         with st.expander(f"Step {step['step_number']}: {step.get('user_action', '')}", expanded=False):
             st.write(f"**Screen/Component:** {step.get('screen_component', '') or 'N/A'}")
@@ -583,12 +724,15 @@ def _render_view_page(store: JourneysStore, existing_journeys: list[dict[str, An
             st.write(f"**Business Rules/Logic:** {step.get('business_rules') or 'None'}")
             st.write(f"**Notes:** {step.get('notes') or 'None'}")
 
-    action_cols = st.columns([1, 1, 2])
-    if action_cols[0].button("Load into Capture", use_container_width=True):
+    action_cols = st.columns([1, 1, 1, 2])
+    if action_cols[0].button("Edit steps & actions", key=f"edit_view_{selected_journey_id}", use_container_width=True):
+        _load_view_editor(selected_journey)
+        st.rerun()
+    if action_cols[1].button("Load into Capture", use_container_width=True):
         _load_editor(selected_journey, existing_journeys)
         st.success("Journey loaded into Capture Journey.")
-    confirm_delete = action_cols[1].checkbox("Confirm delete", key=f"confirm_delete_{selected_journey_id}")
-    if action_cols[2].button("Delete Journey", use_container_width=True):
+    confirm_delete = action_cols[2].checkbox("Confirm delete", key=f"confirm_delete_{selected_journey_id}")
+    if action_cols[3].button("Delete Journey", use_container_width=True):
         if not confirm_delete:
             st.error("Confirm delete before removing a journey.")
         else:
@@ -791,7 +935,9 @@ def render_journey_mapping(catalog_tables: dict[str, dict], actor_name: str) -> 
                 "Capture Journey": lambda: _render_capture_page(
                     store, catalog_tables, existing_journeys, actor_name
                 ),
-                "View Journeys": lambda: _render_view_page(store, existing_journeys),
+                "View Journeys": lambda: _render_view_page(
+                    store, catalog_tables, existing_journeys, actor_name
+                ),
                 "Table Analysis": lambda: _render_analysis_page(
                     store, catalog_tables, existing_journeys
                 ),
