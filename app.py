@@ -18,7 +18,13 @@ from services.supabase_store import SupabaseConfigError, SupabaseStore, load_sup
 from ui.api_discovery import render_api_discovery
 from ui.cards import render_table_card
 from ui.journeys import render_journey_mapping
-from utils.helpers import build_default_table_state, merge_table_state, normalize_table_names
+from utils.helpers import (
+    SIGNOFF_STATUS,
+    TEAM_OPTIONS,
+    build_default_table_state,
+    merge_table_state,
+    normalize_table_names,
+)
 
 load_dotenv()
 
@@ -54,6 +60,7 @@ def init_state() -> None:
         "search_query": "",
         "team_filters": [],
         "column_bucket_filters": [],
+        "status_filters": [],
         "export_payload": None,
         "export_file_path": None,
         "batch_export_payload": None,
@@ -164,6 +171,30 @@ def _column_bucket(column_count: int) -> str:
     if 11 <= column_count <= 50:
         return "11-50"
     return "50+"
+
+
+def _filter_catalog_tables(
+    catalog_tables: dict,
+    search_query: str,
+    team_filters: set[str],
+    column_bucket_filters: set[str],
+    status_filters: set[str],
+) -> list[dict]:
+    search = search_query.strip().casefold()
+    return [
+        table
+        for table in catalog_tables.values()
+        if (not search or search in table["table_name"].casefold())
+        and (not team_filters or table.get("owning_team", "D&IG") in team_filters)
+        and (
+            not column_bucket_filters
+            or _column_bucket(len(table.get("schema", []))) in column_bucket_filters
+        )
+        and (
+            not status_filters
+            or table.get("signoff", {}).get("status", "DRAFT") in status_filters
+        )
+    ]
 
 
 def parse_and_sync() -> None:
@@ -452,18 +483,11 @@ def render_catalog_section() -> None:
         except (RuntimeError, SupabaseConfigError) as exc:
             st.error(str(exc))
 
-    search_col, team_col, bucket_col = st.columns([2, 1.4, 1.1])
+    search_col, team_col, bucket_col, status_col = st.columns([2, 1.4, 1.1, 1.2])
     search_col.text_input("Search tables", key="search_query", placeholder="Filter by table name...")
     team_col.multiselect(
         "Owning team",
-        options=[
-            "D&IG",
-            "Strategy",
-            "S&R",
-            "Modular Innovation",
-            "Analytics",
-            "Integration & Localization",
-        ],
+        options=TEAM_OPTIONS,
         key="team_filters",
         placeholder="All teams",
     )
@@ -473,20 +497,25 @@ def render_catalog_section() -> None:
         key="column_bucket_filters",
         placeholder="All ranges",
     )
-    search_query = st.session_state.get("search_query", "").strip().casefold()
+    status_col.multiselect(
+        "Status",
+        options=SIGNOFF_STATUS,
+        key="status_filters",
+        placeholder="All statuses",
+        format_func=lambda value: value.title(),
+    )
+    search_query = st.session_state.get("search_query", "")
     team_filters = set(st.session_state.get("team_filters", []))
     column_bucket_filters = set(st.session_state.get("column_bucket_filters", []))
+    status_filters = set(st.session_state.get("status_filters", []))
 
-    visible_tables = [
-        table
-        for table in catalog_tables.values()
-        if (not search_query or search_query in table["table_name"].casefold())
-        and (not team_filters or table.get("owning_team", "D&IG") in team_filters)
-        and (
-            not column_bucket_filters
-            or _column_bucket(len(table.get("schema", []))) in column_bucket_filters
-        )
-    ]
+    visible_tables = _filter_catalog_tables(
+        catalog_tables,
+        search_query,
+        team_filters,
+        column_bucket_filters,
+        status_filters,
+    )
     if not visible_tables:
         st.warning("No tables match the current search filter.")
         return
