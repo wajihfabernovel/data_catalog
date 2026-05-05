@@ -3,6 +3,7 @@ add column if not exists owning_team text,
 add column if not exists metadata_profile_json text;
 
 alter table if exists catalog_columns
+add column if not exists remarks text default 'to maintain',
 add column if not exists attribute_type text,
 add column if not exists attribute_type_name text,
 add column if not exists is_custom_attribute boolean,

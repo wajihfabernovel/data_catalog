@@ -23,6 +23,7 @@ from utils.helpers import (
     TEAM_OPTIONS,
     build_default_table_state,
     merge_table_state,
+    normalize_schema_remarks,
     normalize_table_names,
 )
 
@@ -274,7 +275,7 @@ def fetch_dataverse_metadata_and_sync() -> None:
         merged = merge_table_state(default_table, stored_table)
         merged["metadata_profile"] = fetched_table.get("metadata_profile", merged.get("metadata_profile", {}))
         merged["relationships"] = fetched_table.get("relationships", merged.get("relationships", {}))
-        merged["schema"] = fetched_table.get("schema", merged.get("schema", []))
+        merged["schema"] = normalize_schema_remarks(fetched_table.get("schema", merged.get("schema", [])))
         merged["primary_key"] = fetched_table.get("primary_key", merged.get("primary_key", ""))
         catalog_tables[fetched_table["table_key"]] = merged
 
@@ -312,7 +313,7 @@ def fetch_all_custom_dataverse_tables_and_sync() -> None:
         merged = merge_table_state(default_table, stored_table)
         merged["metadata_profile"] = fetched_table.get("metadata_profile", merged.get("metadata_profile", {}))
         merged["relationships"] = fetched_table.get("relationships", merged.get("relationships", {}))
-        merged["schema"] = fetched_table.get("schema", merged.get("schema", []))
+        merged["schema"] = normalize_schema_remarks(fetched_table.get("schema", merged.get("schema", [])))
         merged["primary_key"] = fetched_table.get("primary_key", merged.get("primary_key", ""))
         catalog_tables[fetched_table["table_key"]] = merged
 

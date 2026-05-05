@@ -24,7 +24,10 @@ QUALITY_RATINGS = ["CLEAN", "ACCEPTABLE", "PROBLEMATIC"]
 WRITE_PATHS = ["STORED PROCEDURE", "DAB", "DIRECT SQL", "UNKNOWN"]
 TARGET_RECOMMENDATIONS = ["KEEP AS IS", "REFACTOR", "MERGE WITH", "SPLIT INTO", "RETIRE"]
 SIGNOFF_STATUS = ["DRAFT", "IN REVIEW", "APPROVED"]
+REMARK_OPTIONS = ["to be added", "to be removed", "to maintain"]
+DEFAULT_COLUMN_REMARK = "to maintain"
 TEAM_OPTIONS = [
+    "None",
     "D&IG",
     "Strategy",
     "S&R",
@@ -69,7 +72,7 @@ def build_default_table_state(parsed_table: dict) -> dict:
         "table_name": parsed_table["table_name"],
         "primary_key": parsed_table.get("primary_key", ""),
         "owning_team": "D&IG",
-        "schema": deepcopy(parsed_table.get("schema", [])),
+        "schema": normalize_schema_remarks(parsed_table.get("schema", [])),
         "relationships": {
             "references": deepcopy(parsed_table.get("relationships", {}).get("references", [])),
             "referenced_by": deepcopy(parsed_table.get("relationships", {}).get("referenced_by", [])),
@@ -130,7 +133,9 @@ def merge_table_state(base_table: dict, stored_table: dict | None) -> dict:
                 "edm_type": existing.get("edm_type", column.get("edm_type", "")),
                 "sql_type": existing.get("sql_type", column.get("sql_type", "")),
             }
-        merged["schema"] = sorted(merged_schema.values(), key=lambda col: col["column_name"].casefold())
+        merged["schema"] = normalize_schema_remarks(
+            sorted(merged_schema.values(), key=lambda col: col["column_name"].casefold())
+        )
 
     stored_relationships = deepcopy(stored_table.get("relationships", {}))
     if stored_relationships:
@@ -149,6 +154,14 @@ def merge_table_state(base_table: dict, stored_table: dict | None) -> dict:
         merged[section].update(deepcopy(stored_table.get(section, {})))
 
     return merged
+
+
+def normalize_schema_remarks(schema: list[dict]) -> list[dict]:
+    normalized = deepcopy(schema)
+    for column in normalized:
+        if column.get("remarks") not in REMARK_OPTIONS:
+            column["remarks"] = DEFAULT_COLUMN_REMARK
+    return normalized
 
 
 def normalize_graph_item(item: dict) -> dict:

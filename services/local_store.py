@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from utils.helpers import parse_date, serialize_date
+from utils.helpers import normalize_schema_remarks, parse_date, serialize_date
 
 
 DRAFT_DIR = Path(".data_catalog_drafts")
@@ -14,6 +14,7 @@ DRAFT_PATH = DRAFT_DIR / "latest.json"
 
 def _serialize_table(table: dict) -> dict:
     payload = dict(table)
+    payload["schema"] = normalize_schema_remarks(payload.get("schema", []))
     signoff = dict(payload.get("signoff", {}))
     signoff["date_approved"] = serialize_date(signoff.get("date_approved"))
     payload["signoff"] = signoff
@@ -22,6 +23,7 @@ def _serialize_table(table: dict) -> dict:
 
 def _deserialize_table(table: dict) -> dict:
     payload = dict(table)
+    payload["schema"] = normalize_schema_remarks(payload.get("schema", []))
     signoff = dict(payload.get("signoff", {}))
     signoff["date_approved"] = parse_date(signoff.get("date_approved"))
     payload["signoff"] = signoff

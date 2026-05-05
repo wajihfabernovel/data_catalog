@@ -9,7 +9,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
-from utils.helpers import sanitize_sheet_name, serialize_date
+from utils.helpers import DEFAULT_COLUMN_REMARK, sanitize_sheet_name, serialize_date
 
 
 SECTION_FILL = PatternFill("solid", fgColor="2F75B5")
@@ -62,7 +62,7 @@ def _style_field_row(ws, row: int, label: str, helper_text: str, value: str, lab
 def _write_schema_table(ws, start_row: int, schema: list[dict], table_name: str) -> int:
     _style_section_header(ws, start_row, "1. SCHEMA")
     header_row = start_row + 1
-    headers = ["column_name", "edm_type", "sql_type"]
+    headers = ["column_name", "remarks", "edm_type", "sql_type"]
     for index, header in enumerate(headers, start=1):
         cell = ws.cell(row=header_row, column=index, value=header)
         cell.fill = LABEL_FILL
@@ -72,13 +72,14 @@ def _write_schema_table(ws, start_row: int, schema: list[dict], table_name: str)
     data_start = header_row + 1
     for row_index, column in enumerate(schema, start=data_start):
         ws.cell(row=row_index, column=1, value=column["column_name"])
-        ws.cell(row=row_index, column=2, value=column["edm_type"])
-        ws.cell(row=row_index, column=3, value=column["sql_type"])
-        for column_index in range(1, 4):
+        ws.cell(row=row_index, column=2, value=column.get("remarks", DEFAULT_COLUMN_REMARK))
+        ws.cell(row=row_index, column=3, value=column["edm_type"])
+        ws.cell(row=row_index, column=4, value=column["sql_type"])
+        for column_index in range(1, 5):
             ws.cell(row=row_index, column=column_index).border = THIN_BORDER
 
     last_row = max(data_start, data_start + len(schema) - 1)
-    table_ref = f"A{header_row}:C{last_row}"
+    table_ref = f"A{header_row}:D{last_row}"
     excel_table = Table(
         displayName=f"{sanitize_sheet_name(table_name).replace(' ', '_')[:20]}_schema",
         ref=table_ref,
@@ -223,7 +224,7 @@ def _write_relationships(ws, start_row: int, table: dict) -> int:
             entry.get("references_table", ""),
             entry.get("references_column", ""),
             entry.get("cardinality", ""),
-            entry.get("mandatory", ""),
+            "True" if entry.get("mandatory") else "False",
         ]
         for column_index, value in enumerate(values, start=1):
             cell = ws.cell(row=row, column=column_index, value=value)

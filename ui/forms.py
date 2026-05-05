@@ -9,11 +9,14 @@ from utils.helpers import (
     CHOICES_YES_NO,
     CHOICES_YES_NO_UNSURE,
     COLUMN_CATEGORY_LABEL,
+    DEFAULT_COLUMN_REMARK,
     QUALITY_RATINGS,
+    REMARK_OPTIONS,
     SIGNOFF_STATUS,
     TEAM_OPTIONS,
     TARGET_RECOMMENDATIONS,
     WRITE_PATHS,
+    normalize_schema_remarks,
     widget_key,
 )
 
@@ -28,7 +31,7 @@ def _select_index(options: list[str], value: str) -> int:
 # Schema editor (enriched when API data is present)
 # ---------------------------------------------------------------------------
 
-_BASE_COLS = ["column_name", "edm_type", "sql_type"]
+_BASE_COLS = ["column_name", "remarks", "edm_type", "sql_type"]
 _API_COLS = ["attribute_type", "source_type", "column_category", "lookup_target"]
 
 
@@ -46,6 +49,10 @@ def render_schema_section(table: dict) -> list[dict]:
         for c in _BASE_COLS:
             if c not in schema_df.columns:
                 schema_df[c] = ""
+        schema_df["remarks"] = schema_df["remarks"].where(
+            schema_df["remarks"].isin(REMARK_OPTIONS),
+            DEFAULT_COLUMN_REMARK,
+        )
         if has_api_data:
             for c in _API_COLS:
                 if c not in schema_df.columns:
@@ -54,6 +61,11 @@ def render_schema_section(table: dict) -> list[dict]:
     # Build column config and disabled list
     col_config: dict = {
         "column_name": st.column_config.TextColumn("Column name"),
+        "remarks": st.column_config.SelectboxColumn(
+            "Remarks",
+            options=REMARK_OPTIONS,
+            default=DEFAULT_COLUMN_REMARK,
+        ),
         "edm_type": st.column_config.TextColumn("Edm type"),
         "sql_type": st.column_config.TextColumn("SQL type"),
     }
@@ -87,7 +99,7 @@ def render_schema_section(table: dict) -> list[dict]:
     cleaned_rows = edited_schema.dropna(how="all").to_dict(orient="records")
 
     if existing_schema and not cleaned_rows:
-        return existing_schema
+        return normalize_schema_remarks(existing_schema)
 
     if has_api_data:
         # Re-merge editable changes with original rows to preserve all hidden fields
@@ -101,9 +113,9 @@ def render_schema_section(table: dict) -> list[dict]:
                 merged.append(combined)
             else:
                 merged.append(row)
-        return merged
+        return normalize_schema_remarks(merged)
 
-    return cleaned_rows
+    return normalize_schema_remarks(cleaned_rows)
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +299,7 @@ def render_table_context_section(table: dict) -> str:
     return st.selectbox(
         "Owning team",
         TEAM_OPTIONS,
-        index=_select_index(TEAM_OPTIONS, table.get("owning_team", TEAM_OPTIONS[0])),
+        index=_select_index(TEAM_OPTIONS, table.get("owning_team", "D&IG")),
         key=widget_key(table_key, "owning_team"),
     )
 

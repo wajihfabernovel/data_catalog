@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from postgrest import APIError
 from supabase import Client, create_client
 
-from utils.helpers import parse_date, serialize_date, table_key_from_name
+from utils.helpers import DEFAULT_COLUMN_REMARK, parse_date, serialize_date, table_key_from_name
 
 load_dotenv()
 
@@ -254,6 +254,7 @@ add column if not exists is_state_machine_candidate boolean;"""
                         "column_name": row.get("column_name", ""),
                         "edm_type": row.get("edm_type", ""),
                         "sql_type": row.get("sql_type", ""),
+                        "remarks": row.get("remarks", DEFAULT_COLUMN_REMARK),
                         "attribute_type": row.get("attribute_type", ""),
                         "attribute_type_name": row.get("attribute_type_name", ""),
                         "is_custom_attribute": self._coerce_bool(row.get("is_custom_attribute")),
@@ -352,6 +353,7 @@ add column if not exists is_state_machine_candidate boolean;"""
                                 "column_name": col["column_name"],
                                 "edm_type": col["edm_type"],
                                 "sql_type": col["sql_type"],
+                                "remarks": col.get("remarks", DEFAULT_COLUMN_REMARK),
                                 "attribute_type": col.get("attribute_type", ""),
                                 "attribute_type_name": col.get("attribute_type_name", ""),
                                 "is_custom_attribute": self._coerce_bool(
