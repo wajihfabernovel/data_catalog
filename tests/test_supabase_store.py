@@ -31,6 +31,7 @@ class SupabaseStoreTests(unittest.TestCase):
         self.assertIn("metadata_profile_json", message)
         self.assertIn("alter table if exists catalog_tables", message)
         self.assertIn("add column if not exists metadata_profile_json text", message)
+        self.assertIn("add column if not exists remarks text default 'to maintain'", message)
 
     def test_fetch_all_rows_converts_postgrest_errors_to_runtime_errors(self):
         error = APIError(
