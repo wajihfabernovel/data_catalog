@@ -20,6 +20,7 @@ from services.business_flows import (
     save_template_draft,
     section_dataframe,
     section_editable_columns,
+    synchronize_linked_templates,
 )
 
 
@@ -27,7 +28,7 @@ TEMPLATES_STATE_KEY = "business_flow_templates"
 
 
 def _ensure_template_state() -> None:
-    st.session_state.setdefault(TEMPLATES_STATE_KEY, build_initial_templates())
+    st.session_state.setdefault(TEMPLATES_STATE_KEY, synchronize_linked_templates(build_initial_templates()))
 
 
 def _selected_section(default_section: str) -> str:
@@ -84,7 +85,7 @@ def _render_template_editor(section: str, scope: str) -> pd.DataFrame:
 
     if reset_section:
         templates[section] = build_initial_templates()[section]
-        st.session_state[TEMPLATES_STATE_KEY] = templates
+        st.session_state[TEMPLATES_STATE_KEY] = synchronize_linked_templates(templates)
         st.rerun()
 
     if add_row:
@@ -115,6 +116,7 @@ def _render_template_editor(section: str, scope: str) -> pd.DataFrame:
         edited_rows=edited_df,
         columns=editable_columns,
     )
+    templates = synchronize_linked_templates(templates)
     st.session_state[TEMPLATES_STATE_KEY] = templates
 
     if st.button("Delete checked rows", key=f"delete_business_flow_{section}_{scope}"):
@@ -127,7 +129,7 @@ def _render_template_editor(section: str, scope: str) -> pd.DataFrame:
                 if bool(editor_row.get("Delete"))
             }
         ]
-        st.session_state[TEMPLATES_STATE_KEY] = templates
+        st.session_state[TEMPLATES_STATE_KEY] = synchronize_linked_templates(templates)
         st.rerun()
 
     output_df = pd.DataFrame(
@@ -166,7 +168,7 @@ def render_journey_mapping(catalog_tables: dict[str, dict], actor_name: str | No
     with load_col:
         if st.button("Load saved templates", key="load_business_flow_templates"):
             try:
-                st.session_state[TEMPLATES_STATE_KEY] = load_template_draft()
+                st.session_state[TEMPLATES_STATE_KEY] = synchronize_linked_templates(load_template_draft())
                 st.success("Loaded saved business flow templates.")
                 st.rerun()
             except FileNotFoundError as exc:

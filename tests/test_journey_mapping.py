@@ -7,9 +7,12 @@ from services.business_flows import (
     BUSINESS_FLOW_SECTIONS,
     EDITABLE_ROW_ID,
     EDITABLE_SCOPE_COLUMN,
+    GENERATED_FROM_FIELD,
+    GENERATED_KIND_FIELD,
     MODELING_RULE_COLUMNS,
     SCENARIO_COLUMNS,
     TABLE_ROLE_COLUMNS,
+    USER_CREATED_FIELD,
     available_scrum_teams,
     build_initial_templates,
     filter_template_rows,
@@ -17,6 +20,7 @@ from services.business_flows import (
     merge_editor_rows,
     save_template_draft,
     section_dataframe,
+    synchronize_linked_templates,
 )
 from ui.journeys import TEMPLATES_STATE_KEY, _ensure_template_state, _render_template_editor, render_journey_mapping
 
@@ -113,6 +117,92 @@ class JourneyMappingTests(unittest.TestCase):
 
         self.assertEqual(saved_path, path)
         self.assertEqual(loaded["Scenarios"][0]["Scenario Name"], "Edited scenario")
+
+    def test_scenario_rows_implicitly_generate_table_roles_and_summary(self):
+        templates = {section: [] for section in BUSINESS_FLOW_SECTIONS}
+        templates["Scenarios"] = [
+            {
+                EDITABLE_ROW_ID: "scenario-1",
+                EDITABLE_SCOPE_COLUMN: "Alpha",
+                USER_CREATED_FIELD: True,
+                "Scenario Name": "Alpha approval",
+                "Business Meaning": "Alpha users approve records.",
+                "Flow": "User -> Alpha Request -> Approval",
+                "Main Tables": "alpha_request; alpha_approval",
+            }
+        ]
+
+        synced = synchronize_linked_templates(templates)
+
+        target_tables = {row["Target Table"] for row in synced["Table Roles"]}
+        self.assertEqual(target_tables, {"alpha_request", "alpha_approval"})
+        self.assertTrue(all(row[EDITABLE_SCOPE_COLUMN] == "Alpha" for row in synced["Table Roles"]))
+        self.assertTrue(all(row[GENERATED_FROM_FIELD] == "scenario-1" for row in synced["Table Roles"]))
+        self.assertEqual(synced["End-to-End Summary"][0]["Path"], "Alpha approval")
+        self.assertEqual(synced["End-to-End Summary"][0]["End-to-End Flow"], "User -> Alpha Request -> Approval")
+
+    def test_implicit_sync_refreshes_generated_rows_when_source_changes(self):
+        templates = {section: [] for section in BUSINESS_FLOW_SECTIONS}
+        templates["Scenarios"] = [
+            {
+                EDITABLE_ROW_ID: "scenario-1",
+                EDITABLE_SCOPE_COLUMN: "Alpha",
+                USER_CREATED_FIELD: True,
+                "Scenario Name": "Alpha approval",
+                "Business Meaning": "",
+                "Flow": "Old flow",
+                "Main Tables": "old_table",
+            }
+        ]
+        first_sync = synchronize_linked_templates(templates)
+        first_sync["Scenarios"][0]["Flow"] = "New flow"
+        first_sync["Scenarios"][0]["Main Tables"] = "new_table"
+
+        second_sync = synchronize_linked_templates(first_sync)
+
+        self.assertEqual([row["Target Table"] for row in second_sync["Table Roles"]], ["new_table"])
+        self.assertEqual(second_sync["End-to-End Summary"][0]["End-to-End Flow"], "New flow")
+        self.assertEqual(second_sync["End-to-End Summary"][0][GENERATED_KIND_FIELD], "scenario_summary")
+
+    def test_user_created_table_roles_implicitly_generate_modeling_rules(self):
+        templates = {section: [] for section in BUSINESS_FLOW_SECTIONS}
+        templates["Table Roles"] = [
+            {
+                EDITABLE_ROW_ID: "role-1",
+                EDITABLE_SCOPE_COLUMN: "Alpha",
+                USER_CREATED_FIELD: True,
+                "Order": 1,
+                "Concept": "Alpha Request",
+                "Role in Flow": "Stores approval request header",
+                "Target Table": "alpha_request",
+                "Notes": "Header table",
+            }
+        ]
+
+        synced = synchronize_linked_templates(templates)
+
+        self.assertEqual(synced["Key Modeling Rules"][0]["Rule"], "Alpha Request usage")
+        self.assertEqual(synced["Key Modeling Rules"][0]["Implementation"], "alpha_request")
+        self.assertEqual(synced["Key Modeling Rules"][0][GENERATED_FROM_FIELD], "role-1")
+
+    def test_user_created_modeling_rules_implicitly_generate_table_roles(self):
+        templates = {section: [] for section in BUSINESS_FLOW_SECTIONS}
+        templates["Key Modeling Rules"] = [
+            {
+                EDITABLE_ROW_ID: "rule-1",
+                EDITABLE_SCOPE_COLUMN: "",
+                USER_CREATED_FIELD: True,
+                "Rule": "Alpha request history",
+                "Explanation": "Persist request history.",
+                "Implementation": "alpha_request_history stores history rows.",
+            }
+        ]
+
+        synced = synchronize_linked_templates(templates)
+
+        self.assertEqual(synced["Table Roles"][0]["Target Table"], "alpha_request_history")
+        self.assertEqual(synced["Table Roles"][0][EDITABLE_SCOPE_COLUMN], "")
+        self.assertEqual(synced["Table Roles"][0][GENERATED_KIND_FIELD], "rule_table_role")
 
     def test_summary_and_rules_are_scoped_by_scrum_team(self):
         self.assertEqual(available_scrum_teams(), ["D&IG"])

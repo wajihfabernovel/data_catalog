@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,9 @@ import pandas as pd
 TEMPLATE_DRAFT_PATH = Path(".data_catalog_drafts") / "business_flow_templates.json"
 EDITABLE_ROW_ID = "_row_id"
 EDITABLE_SCOPE_COLUMN = "Scrum Team"
+USER_CREATED_FIELD = "_user_created"
+GENERATED_FROM_FIELD = "_generated_from"
+GENERATED_KIND_FIELD = "_generated_kind"
 ALL_TEMPLATES_SCOPE = "All templates"
 GLOBAL_TEMPLATES_SCOPE = "Global / unassigned"
 SCENARIO_COLUMNS = ["Scenario Name", "Business Meaning", "Flow", "Main Tables"]
@@ -39,6 +43,13 @@ SECTION_COLUMNS = {
     "Table Roles": TABLE_ROLE_COLUMNS,
     "End-to-End Summary": END_TO_END_COLUMNS,
     "Key Modeling Rules": MODELING_RULE_COLUMNS,
+}
+
+GENERATED_KINDS = {
+    "scenario_table_role",
+    "scenario_summary",
+    "rule_table_role",
+    "table_role_rule",
 }
 
 BUSINESS_FLOW_DATA: dict[str, dict[str, list[dict[str, Any]]]] = {
@@ -409,6 +420,11 @@ def _template_row_id(section: str, row_index: int) -> str:
     return f"{section.lower().replace(' ', '_')}_{row_index + 1:03d}"
 
 
+def _generated_row_id(kind: str, source_id: str, discriminator: str = "") -> str:
+    suffix = f"_{discriminator}" if discriminator else ""
+    return f"generated_{kind}_{source_id}{suffix}".replace(" ", "_").lower()
+
+
 def build_initial_templates() -> dict[str, list[dict[str, Any]]]:
     """Return editable template rows seeded from the workbook reference data."""
     templates: dict[str, list[dict[str, Any]]] = {section: [] for section in BUSINESS_FLOW_SECTIONS}
@@ -468,6 +484,14 @@ def _clean_editor_value(value: Any) -> Any:
     return value
 
 
+def _hidden_row_metadata(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in row.items()
+        if key.startswith("_") and key != EDITABLE_ROW_ID
+    }
+
+
 def merge_editor_rows(
     current_rows: list[dict[str, Any]],
     visible_row_ids: set[str],
@@ -485,6 +509,11 @@ def merge_editor_rows(
     else:
         edited_payload = list(edited_rows)
 
+    current_by_id = {
+        str(row.get(EDITABLE_ROW_ID, "")): row
+        for row in current_rows
+        if str(row.get(EDITABLE_ROW_ID, "")).strip()
+    }
     hidden_rows = [row for row in current_rows if row.get(EDITABLE_ROW_ID) not in visible_row_ids]
     merged_rows = list(hidden_rows)
 
@@ -494,10 +523,191 @@ def merge_editor_rows(
         cleaned = {column: _clean_editor_value(row.get(column, "")) for column in columns}
         if not any(str(value).strip() for value in cleaned.values()):
             continue
-        row_id = str(row.get(EDITABLE_ROW_ID) or "").strip() or uuid.uuid4().hex
-        merged_rows.append({EDITABLE_ROW_ID: row_id, **cleaned})
+        incoming_row_id = str(row.get(EDITABLE_ROW_ID) or "").strip()
+        row_id = incoming_row_id or uuid.uuid4().hex
+        metadata = _hidden_row_metadata(current_by_id.get(incoming_row_id, {}))
+        if not incoming_row_id:
+            metadata[USER_CREATED_FIELD] = True
+        merged_rows.append({EDITABLE_ROW_ID: row_id, **metadata, **cleaned})
 
     return merged_rows
+
+
+def _row_scope(row: dict[str, Any]) -> str:
+    return str(row.get(EDITABLE_SCOPE_COLUMN, "")).strip()
+
+
+def _is_user_source(row: dict[str, Any]) -> bool:
+    return bool(row.get(USER_CREATED_FIELD))
+
+
+def _is_generated(row: dict[str, Any]) -> bool:
+    return str(row.get(GENERATED_KIND_FIELD, "")) in GENERATED_KINDS
+
+
+def _table_role_key(row: dict[str, Any]) -> tuple[str, str]:
+    return (_row_scope(row), str(row.get("Target Table", "")).strip().casefold())
+
+
+def _rule_key(row: dict[str, Any]) -> tuple[str, str]:
+    return (_row_scope(row), str(row.get("Rule", "")).strip().casefold())
+
+
+def _summary_key(row: dict[str, Any]) -> tuple[str, str]:
+    return (_row_scope(row), str(row.get("Path", "")).strip().casefold())
+
+
+def _concept_from_table_name(table_name: str) -> str:
+    text = table_name
+    for prefix in ("dig_", "hive_"):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+    return text.replace("_", " ").strip().title() or table_name
+
+
+def _parse_table_list(value: Any) -> list[str]:
+    seen: set[str] = set()
+    tables: list[str] = []
+    for raw_part in re.split(r"[;,\n]", str(value or "")):
+        table_name = raw_part.strip().strip(".")
+        if not table_name:
+            continue
+        key = table_name.casefold()
+        if key not in seen:
+            seen.add(key)
+            tables.append(table_name)
+    return tables
+
+
+def _parse_implementation_tables(value: Any) -> list[str]:
+    seen: set[str] = set()
+    tables: list[str] = []
+    pattern = re.compile(r"\b(?:[a-z][a-z0-9]*_[a-z0-9_]*|project_details)\b", re.IGNORECASE)
+    for match in pattern.finditer(str(value or "")):
+        table_name = match.group(0).strip().strip(".")
+        if table_name.endswith("_id"):
+            continue
+        key = table_name.casefold()
+        if key not in seen:
+            seen.add(key)
+            tables.append(table_name)
+    return tables
+
+
+def _non_generated_templates(templates: dict[str, list[dict[str, Any]]]) -> dict[str, list[dict[str, Any]]]:
+    return {
+        section: [row for row in templates.get(section, []) if not _is_generated(row)]
+        for section in BUSINESS_FLOW_SECTIONS
+    }
+
+
+def synchronize_linked_templates(
+    templates: dict[str, list[dict[str, Any]]]
+) -> dict[str, list[dict[str, Any]]]:
+    """Implicitly fill linked template sections from user-created source rows.
+
+    Generated rows are recomputed on each call. Seeded/manual rows are preserved and
+    never overwritten by sync.
+    """
+    synced = _non_generated_templates(templates)
+
+    table_role_keys = {_table_role_key(row) for row in synced["Table Roles"] if row.get("Target Table")}
+    summary_keys = {_summary_key(row) for row in synced["End-to-End Summary"] if row.get("Path")}
+    rule_keys = {_rule_key(row) for row in synced["Key Modeling Rules"] if row.get("Rule")}
+
+    for scenario in synced["Scenarios"]:
+        if not _is_user_source(scenario):
+            continue
+        source_id = str(scenario.get(EDITABLE_ROW_ID, ""))
+        scope = _row_scope(scenario)
+        scenario_name = str(scenario.get("Scenario Name", "")).strip()
+        for table_name in _parse_table_list(scenario.get("Main Tables", "")):
+            key = (scope, table_name.casefold())
+            if key in table_role_keys:
+                continue
+            synced["Table Roles"].append(
+                {
+                    EDITABLE_ROW_ID: _generated_row_id("scenario_table_role", source_id, table_name),
+                    EDITABLE_SCOPE_COLUMN: scope,
+                    GENERATED_FROM_FIELD: source_id,
+                    GENERATED_KIND_FIELD: "scenario_table_role",
+                    "Order": "",
+                    "Concept": _concept_from_table_name(table_name),
+                    "Role in Flow": f"Referenced by scenario: {scenario_name}" if scenario_name else "Referenced by scenario",
+                    "Target Table": table_name,
+                    "Notes": "Auto-generated from Scenarios",
+                }
+            )
+            table_role_keys.add(key)
+
+        flow = str(scenario.get("Flow", "")).strip()
+        if scenario_name and flow:
+            key = (scope, scenario_name.casefold())
+            if key not in summary_keys:
+                synced["End-to-End Summary"].append(
+                    {
+                        EDITABLE_ROW_ID: _generated_row_id("scenario_summary", source_id),
+                        EDITABLE_SCOPE_COLUMN: scope,
+                        GENERATED_FROM_FIELD: source_id,
+                        GENERATED_KIND_FIELD: "scenario_summary",
+                        "Path": scenario_name,
+                        "End-to-End Flow": flow,
+                    }
+                )
+                summary_keys.add(key)
+
+    for table_role in synced["Table Roles"]:
+        if not _is_user_source(table_role):
+            continue
+        source_id = str(table_role.get(EDITABLE_ROW_ID, ""))
+        scope = _row_scope(table_role)
+        table_name = str(table_role.get("Target Table", "")).strip()
+        if not table_name:
+            continue
+        concept = str(table_role.get("Concept", "")).strip() or _concept_from_table_name(table_name)
+        rule_name = f"{concept} usage"
+        key = (scope, rule_name.casefold())
+        if key in rule_keys:
+            continue
+        synced["Key Modeling Rules"].append(
+            {
+                EDITABLE_ROW_ID: _generated_row_id("table_role_rule", source_id),
+                EDITABLE_SCOPE_COLUMN: scope,
+                GENERATED_FROM_FIELD: source_id,
+                GENERATED_KIND_FIELD: "table_role_rule",
+                "Rule": rule_name,
+                "Explanation": str(table_role.get("Role in Flow", "")).strip(),
+                "Implementation": table_name,
+            }
+        )
+        rule_keys.add(key)
+
+    for rule in synced["Key Modeling Rules"]:
+        if not _is_user_source(rule):
+            continue
+        source_id = str(rule.get(EDITABLE_ROW_ID, ""))
+        scope = _row_scope(rule)
+        rule_name = str(rule.get("Rule", "")).strip()
+        for table_name in _parse_implementation_tables(rule.get("Implementation", "")):
+            key = (scope, table_name.casefold())
+            if key in table_role_keys:
+                continue
+            synced["Table Roles"].append(
+                {
+                    EDITABLE_ROW_ID: _generated_row_id("rule_table_role", source_id, table_name),
+                    EDITABLE_SCOPE_COLUMN: scope,
+                    GENERATED_FROM_FIELD: source_id,
+                    GENERATED_KIND_FIELD: "rule_table_role",
+                    "Order": "",
+                    "Concept": _concept_from_table_name(table_name),
+                    "Role in Flow": f"Referenced by modeling rule: {rule_name}" if rule_name else "Referenced by modeling rule",
+                    "Target Table": table_name,
+                    "Notes": "Auto-generated from Key Modeling Rules",
+                }
+            )
+            table_role_keys.add(key)
+
+    return synced
 
 
 def save_template_draft(
