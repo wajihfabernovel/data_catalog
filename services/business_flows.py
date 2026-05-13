@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import json
+import uuid
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
 
+TEMPLATE_DRAFT_PATH = Path(".data_catalog_drafts") / "business_flow_templates.json"
+EDITABLE_ROW_ID = "_row_id"
+EDITABLE_SCOPE_COLUMN = "Scrum Team"
+ALL_TEMPLATES_SCOPE = "All templates"
+GLOBAL_TEMPLATES_SCOPE = "Global / unassigned"
 SCENARIO_COLUMNS = ["Scenario Name", "Business Meaning", "Flow", "Main Tables"]
 TABLE_ROLE_COLUMNS = ["Order", "Concept", "Role in Flow", "Target Table", "Notes"]
 END_TO_END_COLUMNS = ["Path", "End-to-End Flow"]
@@ -395,3 +403,120 @@ def section_dataframe(scrum_team: str, section: str) -> pd.DataFrame:
     columns = SECTION_COLUMNS[section]
     rows = BUSINESS_FLOW_DATA[scrum_team][data_key]
     return pd.DataFrame(rows, columns=columns)
+
+
+def _template_row_id(section: str, row_index: int) -> str:
+    return f"{section.lower().replace(' ', '_')}_{row_index + 1:03d}"
+
+
+def build_initial_templates() -> dict[str, list[dict[str, Any]]]:
+    """Return editable template rows seeded from the workbook reference data."""
+    templates: dict[str, list[dict[str, Any]]] = {section: [] for section in BUSINESS_FLOW_SECTIONS}
+    for scrum_team, sections in BUSINESS_FLOW_DATA.items():
+        for section, data_key in SECTION_DATA_KEYS.items():
+            for idx, row in enumerate(sections[data_key]):
+                templates[section].append(
+                    {
+                        EDITABLE_ROW_ID: _template_row_id(f"{scrum_team}_{section}", idx),
+                        EDITABLE_SCOPE_COLUMN: scrum_team,
+                        **{column: row.get(column, "") for column in SECTION_COLUMNS[section]},
+                    }
+                )
+    return templates
+
+
+def section_editable_columns(section: str, include_delete: bool = False) -> list[str]:
+    """Return the editable columns for a business flow section."""
+    columns = [EDITABLE_SCOPE_COLUMN, *SECTION_COLUMNS[section]]
+    if include_delete:
+        return ["Delete", *columns]
+    return columns
+
+
+def available_template_scopes(templates: dict[str, list[dict[str, Any]]]) -> list[str]:
+    """Return filter options derived from editable template row scopes."""
+    teams = {
+        str(row.get(EDITABLE_SCOPE_COLUMN, "")).strip()
+        for rows in templates.values()
+        for row in rows
+        if str(row.get(EDITABLE_SCOPE_COLUMN, "")).strip()
+    }
+    teams.update(BUSINESS_FLOW_DATA.keys())
+    return [ALL_TEMPLATES_SCOPE, GLOBAL_TEMPLATES_SCOPE, *sorted(teams, key=str.casefold)]
+
+
+def filter_template_rows(rows: list[dict[str, Any]], scope: str) -> list[dict[str, Any]]:
+    """Filter editable rows by global/all/team scope.
+
+    A blank Scrum Team means the row is global and should appear for a specific team.
+    """
+    if scope == ALL_TEMPLATES_SCOPE:
+        return list(rows)
+    if scope == GLOBAL_TEMPLATES_SCOPE:
+        return [row for row in rows if not str(row.get(EDITABLE_SCOPE_COLUMN, "")).strip()]
+    return [
+        row
+        for row in rows
+        if not str(row.get(EDITABLE_SCOPE_COLUMN, "")).strip()
+        or str(row.get(EDITABLE_SCOPE_COLUMN, "")).strip() == scope
+    ]
+
+
+def _clean_editor_value(value: Any) -> Any:
+    if pd.isna(value):
+        return ""
+    return value
+
+
+def merge_editor_rows(
+    current_rows: list[dict[str, Any]],
+    visible_row_ids: set[str],
+    edited_rows: list[dict[str, Any]] | pd.DataFrame,
+    columns: list[str],
+) -> list[dict[str, Any]]:
+    """Merge editor output into the saved template rows.
+
+    Rows outside the current filter are preserved. Existing visible rows missing from
+    editor output are treated as deleted. Edited rows with Delete checked are removed.
+    New rows without ids receive stable generated ids.
+    """
+    if isinstance(edited_rows, pd.DataFrame):
+        edited_payload = edited_rows.to_dict("records")
+    else:
+        edited_payload = list(edited_rows)
+
+    hidden_rows = [row for row in current_rows if row.get(EDITABLE_ROW_ID) not in visible_row_ids]
+    merged_rows = list(hidden_rows)
+
+    for row in edited_payload:
+        if bool(row.get("Delete")):
+            continue
+        cleaned = {column: _clean_editor_value(row.get(column, "")) for column in columns}
+        if not any(str(value).strip() for value in cleaned.values()):
+            continue
+        row_id = str(row.get(EDITABLE_ROW_ID) or "").strip() or uuid.uuid4().hex
+        merged_rows.append({EDITABLE_ROW_ID: row_id, **cleaned})
+
+    return merged_rows
+
+
+def save_template_draft(
+    templates: dict[str, list[dict[str, Any]]],
+    path: Path = TEMPLATE_DRAFT_PATH,
+) -> Path:
+    """Persist editable business-flow templates to a local JSON draft."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"templates": templates}, indent=2), encoding="utf-8")
+    return path
+
+
+def load_template_draft(path: Path = TEMPLATE_DRAFT_PATH) -> dict[str, list[dict[str, Any]]]:
+    """Load editable business-flow templates from a local JSON draft."""
+    if not path.exists():
+        raise FileNotFoundError(f"No business flow template draft found at {path}.")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    templates = payload.get("templates", {})
+    return {
+        section: list(templates.get(section, build_initial_templates()[section]))
+        for section in BUSINESS_FLOW_SECTIONS
+    }
