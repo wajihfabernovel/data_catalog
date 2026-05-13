@@ -468,8 +468,8 @@ def render_catalog_section() -> None:
         return
 
     st.caption(
-        "Review and annotate every loaded table. Expand a card to edit signoff status, data quality, "
-        "column-level notes, and team ownership. Save changes table-by-table to Supabase or export "
+        "Review and annotate every loaded table. Expand a card to edit signoff status, "
+        "column-level notes, relationships, and team ownership. Save changes table-by-table to Supabase or export "
         "individual tables to Excel. Use the Batch tab for bulk operations."
     )
     render_catalog_stats(catalog_tables)
@@ -760,14 +760,12 @@ def render_modeling_summary_section() -> None:
         return
 
     st.caption(
-        "Migration readiness scorecard ranked by FK centrality (HIGH / MEDIUM / LOW) and priority "
-        "(P0 / P1). Drills into rollup fields to model as dbt metrics, formula columns to model as dbt "
-        "expressions, shadow columns to drop, multiselect fields requiring junction tables, and "
-        "state-machine picklists (statecode / statuscode) with their full option-value sets."
+        "Modeling scorecard ranked by FK centrality (HIGH / MEDIUM / LOW). Drills into rollup fields "
+        "to model as dbt metrics, formula columns to model as dbt expressions, shadow columns to drop, "
+        "and multiselect fields requiring junction tables."
     )
     st.markdown("### Modeling Summary")
     summary_rows = []
-    state_rows = []
     drop_rows = []
     computed_rows = []
     multi_rows = []
@@ -779,7 +777,6 @@ def render_modeling_summary_section() -> None:
                 "table_name": table.get("table_name", ""),
                 "primary_key": table.get("primary_key", ""),
                 "centrality_score": profile.get("centrality_score", ""),
-                "migration_priority": profile.get("migration_priority", ""),
                 "recommended_target_entity": profile.get("recommended_target_entity", ""),
                 "lookup_columns": profile.get("lookup_columns", 0),
                 "incoming_relationships": profile.get("incoming_relationships", 0),
@@ -800,8 +797,6 @@ def render_modeling_summary_section() -> None:
                 "modeling_action": column.get("modeling_action", ""),
                 "option_values": column.get("option_values", ""),
             }
-            if column.get("is_state_machine_candidate"):
-                state_rows.append(row)
             if column.get("modeling_action") == "Drop from target model":
                 drop_rows.append(row)
             if column.get("category") in {"Rollup", "Formula"}:
@@ -813,11 +808,9 @@ def render_modeling_summary_section() -> None:
         by=["centrality_score", "lookup_columns", "table_name"],
         ascending=[True, False, True],
     )
-    top_cols = st.columns(4)
+    top_cols = st.columns(2)
     top_cols[0].metric("Tables", len(summary_df))
     top_cols[1].metric("High centrality", int((summary_df["centrality_score"] == "HIGH").sum()))
-    top_cols[2].metric("P0 candidates", int((summary_df["migration_priority"] == "P0 - Critical").sum()))
-    top_cols[3].metric("State machine fields", len(state_rows))
 
     st.markdown("#### Aggregate / Reference Prioritization")
     st.dataframe(summary_df, use_container_width=True, hide_index=True)
@@ -837,9 +830,6 @@ def render_modeling_summary_section() -> None:
     if multi_rows:
         st.markdown("#### MultiSelect Columns")
         st.dataframe(pd.DataFrame(multi_rows), use_container_width=True, hide_index=True)
-    if state_rows:
-        st.markdown("#### State Machine Candidates")
-        st.dataframe(pd.DataFrame(state_rows), use_container_width=True, hide_index=True)
 
 
 def main() -> None:

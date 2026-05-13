@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from io import BytesIO
 from typing import Any
 
@@ -30,14 +29,11 @@ JOURNEY_INDEX_HEADERS = [
     "Journey ID",
     "Journey Name",
     "Module/Domain",
-    "Primary User Role",
     "Frequency (Daily/Weekly/Monthly/Ad-hoc)",
     "Complexity (Low/Med/High)",
     "Total Steps",
     "Core Tables Involved",
-    "Interview Date",
     "Interviewer",
-    "Scrum Team",
 ]
 
 TABLE_CROSS_REFERENCE_HEADERS = [
@@ -50,19 +46,6 @@ TABLE_CROSS_REFERENCE_HEADERS = [
     "Centrality Score",
     "Legacy Table Type",
     "Target Entity (proposed)",
-    "Migration Priority",
-]
-
-STATE_MACHINE_HEADERS = [
-    "Entity/Table",
-    "Status Field Name",
-    "Journey ID",
-    "From State",
-    "To State",
-    "Trigger Action",
-    "User Role Required",
-    "Validation Rules",
-    "Side Effects",
 ]
 
 INSTRUCTIONS_LINES = [
@@ -77,7 +60,7 @@ INSTRUCTIONS_LINES = [
     "1. JOURNEY INDEX SHEET",
     "   - Start here for each new user journey",
     "   - Assign a unique Journey ID (J001, J002, etc.)",
-    "   - Document high-level journey metadata: name, domain, user role, frequency, complexity",
+    "   - Document high-level journey metadata: name, domain, frequency, complexity",
     "",
     "2. JOURNEY TEMPLATE SHEET",
     "   - Add one row per step in the journey",
@@ -88,14 +71,9 @@ INSTRUCTIONS_LINES = [
     "   - Review which tables are touched across journeys",
     "   - Use this to identify central and peripheral tables",
     "",
-    "4. STATE MACHINE MAPPING SHEET",
-    "   - Capture explicit status transitions",
-    "   - Include trigger, role, validations, and side effects",
-    "",
-    "5. NEXT STEPS",
+    "4. NEXT STEPS",
     "   - Validate cross-reference findings",
-    "   - Define target entities and migration priority",
-    "   - Export state machine JSON for validator generation",
+    "   - Define target entities and ownership",
 ]
 
 
@@ -163,11 +141,6 @@ def build_journey_workbook(
     for cell in ws_cross[1]:
         cell.font = Font(bold=True)
 
-    ws_state = workbook.create_sheet("State Machine Mapping")
-    ws_state.append(STATE_MACHINE_HEADERS)
-    for cell in ws_state[1]:
-        cell.font = Font(bold=True)
-
     ws_instructions = workbook.create_sheet("Instructions")
     for idx, line in enumerate(INSTRUCTIONS_LINES, start=1):
         ws_instructions.cell(row=idx, column=1, value=line)
@@ -189,14 +162,11 @@ def build_journey_workbook(
                 journey_id,
                 journey.get("journey_name", ""),
                 journey.get("module_domain", ""),
-                journey.get("primary_user_role", ""),
                 journey.get("frequency", ""),
                 journey.get("complexity", ""),
                 len(steps),
                 ", ".join(core_tables),
-                journey.get("interview_date", ""),
                 journey.get("interviewer", ""),
-                journey.get("scrum_team", ""),
             ]
         )
         for step in steps:
@@ -240,22 +210,6 @@ def build_journey_workbook(
                 row.get("centrality_score", ""),
                 row.get("legacy_table_type", ""),
                 row.get("target_entity_proposed", ""),
-                row.get("migration_priority", ""),
-            ]
-        )
-
-    for transition in state_transitions:
-        ws_state.append(
-            [
-                transition.get("entity_table", ""),
-                transition.get("status_field_name", ""),
-                transition.get("journey_id", ""),
-                transition.get("from_state", ""),
-                transition.get("to_state", ""),
-                transition.get("trigger_action", ""),
-                transition.get("user_role_required", ""),
-                transition.get("validation_rules", ""),
-                transition.get("side_effects", ""),
             ]
         )
 
@@ -264,30 +218,10 @@ def build_journey_workbook(
     return buffer.getvalue()
 
 
-def build_state_machine_json(entity_table: str, transitions: list[dict[str, Any]]) -> bytes:
-    payload = {
-        "entity": entity_table,
-        "status_field": transitions[0].get("status_field_name", "") if transitions else "",
-        "transitions": [
-            {
-                "from_state": transition.get("from_state"),
-                "to_state": transition.get("to_state"),
-                "trigger": transition.get("trigger_action"),
-                "role": transition.get("user_role_required"),
-                "validations": transition.get("validation_rules"),
-                "side_effects": transition.get("side_effects"),
-            }
-            for transition in transitions
-        ],
-    }
-    return json.dumps(payload, indent=2).encode("utf-8")
-
-
 def parse_journey_workbook(file_bytes: bytes) -> list[dict[str, Any]]:
     sheets = pd.read_excel(BytesIO(file_bytes), sheet_name=None, dtype=str)
     index_df = sheets.get("Journey Index", pd.DataFrame()).fillna("")
     template_df = sheets.get("Journey Template", pd.DataFrame()).fillna("")
-    state_df = sheets.get("State Machine Mapping", pd.DataFrame()).fillna("")
 
     journeys: dict[str, dict[str, Any]] = {}
     for _, row in index_df.iterrows():
@@ -366,42 +300,5 @@ def parse_journey_workbook(file_bytes: bytes) -> list[dict[str, Any]]:
                     "write_operation": write["write_operation"],
                 }
             )
-
-    for _, row in state_df.iterrows():
-        journey_id = _safe_text(row.get("Journey ID"))
-        if not journey_id:
-            continue
-        bucket = journeys.setdefault(
-            journey_id,
-            {
-                "journey": {
-                    "journey_id": journey_id,
-                    "journey_name": "",
-                    "module_domain": "",
-                    "primary_user_role": "",
-                    "frequency": "",
-                    "complexity": "",
-                    "interview_date": "",
-                    "interviewer": "",
-                    "scrum_team": "",
-                },
-                "steps": [],
-                "step_tables": [],
-                "transitions": [],
-            },
-        )
-        bucket["transitions"].append(
-            {
-                "journey_id": journey_id,
-                "entity_table": _safe_text(row.get("Entity/Table")),
-                "status_field_name": _safe_text(row.get("Status Field Name")),
-                "from_state": _safe_text(row.get("From State")),
-                "to_state": _safe_text(row.get("To State")),
-                "trigger_action": _safe_text(row.get("Trigger Action")),
-                "user_role_required": _safe_text(row.get("User Role Required")),
-                "validation_rules": _safe_text(row.get("Validation Rules")),
-                "side_effects": _safe_text(row.get("Side Effects")),
-            }
-        )
 
     return list(journeys.values())

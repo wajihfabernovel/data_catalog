@@ -68,7 +68,7 @@ def _build_client(**env_overrides: str) -> DataverseMetadataClient:
 
 
 def _extract_picklist_options(schema: list[dict]) -> list[dict]:
-    """Convert the formatted option_values strings on state-machine columns into structured dicts."""
+    """Convert formatted option_values strings into structured dicts for metadata storage."""
     result = []
     for col in schema:
         if not col.get("is_state_machine_candidate"):
@@ -190,25 +190,14 @@ def _render_result(result: dict) -> None:
 
     # ── Profile summary ───────────────────────────────────────────────────
     centrality = meta.get("centrality_score", "")
-    priority = meta.get("migration_priority", "")
     target = meta.get("recommended_target_entity", "")
-    if any([centrality, priority, target]):
+    if any([centrality, target]):
         st.caption(
             " · ".join(filter(None, [
                 f"Centrality: **{centrality}**" if centrality else "",
-                f"Priority: **{priority}**" if priority else "",
                 f"Target entity: `{target}`" if target else "",
             ]))
         )
-
-    # ── State-machine candidates ──────────────────────────────────────────
-    state_cols = [c for c in api_schema if c.get(
-        "is_state_machine_candidate") and c.get("option_values")]
-    if state_cols:
-        with st.expander("State-machine columns (picklist option values)", expanded=False):
-            for col in state_cols:
-                st.markdown(
-                    f"- **`{col['column_name']}`**: {col['option_values']}")
 
     # ── FK dependencies ───────────────────────────────────────────────────
     fk_cols = [c for c in api_schema if c.get("category") == "Lookup / FK"]

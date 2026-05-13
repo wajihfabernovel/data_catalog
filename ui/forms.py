@@ -6,11 +6,9 @@ import pandas as pd
 import streamlit as st
 
 from utils.helpers import (
-    CHOICES_YES_NO,
     CHOICES_YES_NO_UNSURE,
     COLUMN_CATEGORY_LABEL,
     DEFAULT_COLUMN_REMARK,
-    QUALITY_RATINGS,
     REMARK_OPTIONS,
     SIGNOFF_STATUS,
     TEAM_OPTIONS,
@@ -32,7 +30,42 @@ def _select_index(options: list[str], value: str) -> int:
 # ---------------------------------------------------------------------------
 
 _BASE_COLS = ["column_name", "remarks", "edm_type", "sql_type"]
-_API_COLS = ["attribute_type", "source_type", "column_category", "lookup_target"]
+SCHEMA_DISPLAY_API_COLS = ["attribute_type", "target_column_name", "target_table_name"]
+_API_SOURCE_COLS = ["source_type", "column_category", "lookup_target", "category", "targets"]
+TABLE_FORM_SECTIONS = (
+    "table_context",
+    "dataverse_analysis",
+    "schema",
+    "relationships",
+    "dataverse_profile",
+    "pipeline",
+    "target_model",
+    "signoff",
+)
+
+
+def _schema_relationship_lookup(table: dict) -> dict[str, dict]:
+    return {
+        row.get("fk_column", ""): row
+        for row in table.get("relationships", {}).get("references", [])
+        if row.get("fk_column")
+    }
+
+
+def _schema_display_rows(table: dict, schema_rows: list[dict]) -> list[dict]:
+    references_by_fk = _schema_relationship_lookup(table)
+    display_rows: list[dict] = []
+    for row in schema_rows:
+        display_row = dict(row)
+        reference = references_by_fk.get(row.get("column_name", ""))
+        display_row["target_column_name"] = (
+            reference.get("references_column", "") if reference else ""
+        )
+        display_row["target_table_name"] = (
+            reference.get("references_table", "") if reference else row.get("targets", "")
+        )
+        display_rows.append(display_row)
+    return display_rows
 
 
 def render_schema_section(table: dict) -> list[dict]:
@@ -41,9 +74,11 @@ def render_schema_section(table: dict) -> list[dict]:
     has_api_data = any(col.get("attribute_type") for col in existing_schema)
 
     schema_df = pd.DataFrame(existing_schema) if existing_schema else pd.DataFrame()
+    if has_api_data and not schema_df.empty:
+        schema_df = pd.DataFrame(_schema_display_rows(table, existing_schema))
 
     if schema_df.empty:
-        cols = _BASE_COLS + (_API_COLS if has_api_data else [])
+        cols = _BASE_COLS + (SCHEMA_DISPLAY_API_COLS if has_api_data else [])
         schema_df = pd.DataFrame(columns=cols)
     else:
         for c in _BASE_COLS:
@@ -54,7 +89,7 @@ def render_schema_section(table: dict) -> list[dict]:
             DEFAULT_COLUMN_REMARK,
         )
         if has_api_data:
-            for c in _API_COLS:
+            for c in SCHEMA_DISPLAY_API_COLS:
                 if c not in schema_df.columns:
                     schema_df[c] = ""
 
@@ -75,13 +110,12 @@ def render_schema_section(table: dict) -> list[dict]:
         col_config.update(
             {
                 "attribute_type": st.column_config.TextColumn("Attr type", disabled=True),
-                "source_type": st.column_config.TextColumn("Source", disabled=True),
-                "column_category": st.column_config.TextColumn("Category", disabled=True),
-                "lookup_target": st.column_config.TextColumn("FK target", disabled=True),
+                "target_column_name": st.column_config.TextColumn("Target column name", disabled=True),
+                "target_table_name": st.column_config.TextColumn("Target table name", disabled=True),
             }
         )
-        disabled_cols = _API_COLS
-        display_order = [c for c in _BASE_COLS + _API_COLS if c in schema_df.columns]
+        disabled_cols = SCHEMA_DISPLAY_API_COLS
+        display_order = [c for c in _BASE_COLS + SCHEMA_DISPLAY_API_COLS if c in schema_df.columns]
         schema_df = schema_df[display_order]
     else:
         schema_df = schema_df[[c for c in _BASE_COLS if c in schema_df.columns]]
@@ -112,7 +146,7 @@ def render_schema_section(table: dict) -> list[dict]:
                 combined.update({k: v for k, v in row.items() if k in _BASE_COLS})
                 merged.append(combined)
             else:
-                merged.append(row)
+                merged.append({k: v for k, v in row.items() if k not in _API_SOURCE_COLS})
         return normalize_schema_remarks(merged)
 
     return normalize_schema_remarks(cleaned_rows)
@@ -179,18 +213,6 @@ def render_dataverse_analysis_section(table: dict) -> None:
             )
             bc2.dataframe(fk_df, hide_index=True, use_container_width=True)
 
-    # Picklist / state machine option values
-    pl_options = [p for p in meta.get("picklist_options", []) if p.get("options")]
-    if pl_options:
-        with st.expander("State-machine columns (picklist option values)", expanded=False):
-            for pl in pl_options:
-                opts_md = " · ".join(
-                    f"`{o['value']}` {o['label']}"
-                    for o in pl["options"]
-                    if o.get("label")
-                )
-                st.markdown(f"- **`{pl['logical_name']}`**: {opts_md or '(no labels)'}")
-
     # Computed columns — remind user these go to dbt, not persisted
     computed = [
         c for c in schema
@@ -254,16 +276,6 @@ def render_dataverse_profile_section(table: dict) -> dict:
         value=profile.get("recommended_target_entity", ""),
         key=widget_key(table["table_key"], "profile_recommended_target_entity"),
     )
-    st.text_input(
-        "Migration priority",
-        value=profile.get("migration_priority", ""),
-        key=widget_key(table["table_key"], "profile_migration_priority"),
-    )
-    st.text_area(
-        "State machine candidates",
-        value=profile.get("state_machine_candidates", ""),
-        key=widget_key(table["table_key"], "profile_state_machine_candidates"),
-    )
     st.text_area(
         "Profile notes",
         value=profile.get("notes", ""),
@@ -273,14 +285,6 @@ def render_dataverse_profile_section(table: dict) -> dict:
     profile["recommended_target_entity"] = st.session_state.get(
         widget_key(table["table_key"], "profile_recommended_target_entity"),
         profile.get("recommended_target_entity", ""),
-    )
-    profile["migration_priority"] = st.session_state.get(
-        widget_key(table["table_key"], "profile_migration_priority"),
-        profile.get("migration_priority", ""),
-    )
-    profile["state_machine_candidates"] = st.session_state.get(
-        widget_key(table["table_key"], "profile_state_machine_candidates"),
-        profile.get("state_machine_candidates", ""),
     )
     profile["notes"] = st.session_state.get(
         widget_key(table["table_key"], "profile_notes"),
@@ -350,71 +354,6 @@ def render_relationships_section(table: dict) -> dict:
     return {
         "references": edited_references.dropna(how="all").to_dict(orient="records"),
         "referenced_by": edited_referenced_by.dropna(how="all").to_dict(orient="records"),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Data quality
-# ---------------------------------------------------------------------------
-
-def render_data_quality_section(table: dict) -> dict:
-    st.markdown("#### Data Quality Observations")
-    table_key = table["table_key"]
-    defaults = table["data_quality"]
-
-    left, right = st.columns(2)
-    nullable_issues = left.text_area(
-        "Nullable issues",
-        value=defaults["nullable_issues"],
-        key=widget_key(table_key, "dq_nullable_issues"),
-    )
-    format_inconsistencies = right.text_area(
-        "Format inconsistencies",
-        value=defaults["format_inconsistencies"],
-        key=widget_key(table_key, "dq_format_inconsistencies"),
-    )
-
-    col1, col2, col3 = st.columns(3)
-    duplicate_records = col1.selectbox(
-        "Duplicate records",
-        CHOICES_YES_NO,
-        index=_select_index(CHOICES_YES_NO, defaults["duplicate_records"]),
-        key=widget_key(table_key, "dq_duplicate_records"),
-    )
-    orphan_records = col2.selectbox(
-        "Orphan records",
-        CHOICES_YES_NO,
-        index=_select_index(CHOICES_YES_NO, defaults["orphan_records"]),
-        key=widget_key(table_key, "dq_orphan_records"),
-    )
-    hard_delete_in_use = col3.selectbox(
-        "Hard delete in use",
-        CHOICES_YES_NO,
-        index=_select_index(CHOICES_YES_NO, defaults["hard_delete_in_use"]),
-        key=widget_key(table_key, "dq_hard_delete_in_use"),
-    )
-
-    rating_col, _ = st.columns([1, 1])
-    overall_quality_rating = rating_col.selectbox(
-        "Overall quality rating",
-        QUALITY_RATINGS,
-        index=_select_index(QUALITY_RATINGS, defaults["overall_quality_rating"]),
-        key=widget_key(table_key, "dq_overall_quality_rating"),
-    )
-    quality_notes = st.text_area(
-        "Quality notes",
-        value=defaults["quality_notes"],
-        key=widget_key(table_key, "dq_quality_notes"),
-    )
-
-    return {
-        "nullable_issues": nullable_issues,
-        "format_inconsistencies": format_inconsistencies,
-        "duplicate_records": duplicate_records,
-        "orphan_records": orphan_records,
-        "hard_delete_in_use": hard_delete_in_use,
-        "overall_quality_rating": overall_quality_rating,
-        "quality_notes": quality_notes,
     }
 
 
@@ -588,7 +527,7 @@ def render_table_forms(table: dict) -> dict:
     updated["schema"] = render_schema_section(table)
     updated["relationships"] = render_relationships_section(table)
     updated["metadata_profile"] = render_dataverse_profile_section(table)
-    updated["data_quality"] = render_data_quality_section(table)
+    updated["data_quality"] = table.get("data_quality", {})
     updated["pipeline"] = render_pipeline_section(table)
     updated["target_model"] = render_target_model_section(table)
     updated["signoff"] = render_signoff_section(table)

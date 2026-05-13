@@ -1,153 +1,85 @@
 import unittest
-from datetime import date
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
-import pandas as pd
-
-from ui.journeys import (
-    JOURNEY_SECTIONS,
-    _load_view_editor,
-    _render_selected_journey_section,
-    _save_view_editor_journey,
-    render_journey_mapping,
+from services.business_flows import (
+    BUSINESS_FLOW_SECTIONS,
+    MODELING_RULE_COLUMNS,
+    SCENARIO_COLUMNS,
+    TABLE_ROLE_COLUMNS,
+    available_scrum_teams,
+    section_dataframe,
 )
+from ui.journeys import _render_selected_business_flow_section, render_journey_mapping
 
 
 class JourneyMappingTests(unittest.TestCase):
-    def test_render_selected_journey_section_calls_only_requested_renderer(self):
-        calls = []
-        renderers = {
-            section: (lambda section=section: calls.append(section))
-            for section in JOURNEY_SECTIONS
-        }
-
-        _render_selected_journey_section("State Machines", renderers)
-
-        self.assertEqual(calls, ["State Machines"])
-
-    def test_render_journey_mapping_shows_fetch_errors_without_crashing(self):
-        store = Mock()
-        store.fetch_journeys.side_effect = RuntimeError("relation journeys does not exist")
-
-        with (
-            patch("ui.journeys._journey_store", return_value=store),
-            patch("ui.journeys.st.caption"),
-            patch("ui.journeys.st.error") as error,
-        ):
-            render_journey_mapping({}, "supabase_app")
-
-        error.assert_called_once()
-        self.assertIn("relation journeys does not exist", error.call_args[0][0])
-
-    def test_load_view_editor_replaces_stale_step_action_state(self):
-        state = {
-            "journey_view_step_0_user_action": "stale action",
-            "journey_view_step_0_write_op_hive_old": "DELETE",
-            "journey_view_steps": [{"step_number": 1, "user_action": "stale action"}],
-        }
-        journey = {
-            "journey_id": "J001",
-            "journey_name": "Knowledge Summary",
-            "module_domain": "D&IG",
-            "primary_user_role": "Product Manager",
-            "frequency": "Daily",
-            "complexity": "Medium",
-            "interview_date": "2026-04-27",
-            "interviewer": "Wajih",
-            "steps": [
-                {
-                    "step_number": 1,
-                    "user_action": "Updated action",
-                    "screen_component": "Dialog",
-                    "validation_rules": "Required title",
-                    "business_rules": "Create only once",
-                    "notes": "Edit test",
-                    "table_refs": [
-                        {
-                            "table_name": "hive_summary",
-                            "access_mode": "WRITE",
-                            "is_catalog_table": True,
-                            "write_operation": "UPSERT",
-                        }
-                    ],
-                    "transitions": [],
-                }
-            ],
-        }
-
-        with patch("ui.journeys.st.session_state", state):
-            _load_view_editor(journey)
-
-        self.assertNotIn("journey_view_step_0_write_op_hive_old", state)
-        self.assertEqual(state["journey_view_editor_journey_id"], "J001")
-        self.assertEqual(state["journey_view_steps"][0]["user_action"], "Updated action")
-        self.assertEqual(state["journey_view_steps"][0]["write_operations"]["hive_summary"], "UPSERT")
-
-    def test_save_view_editor_journey_persists_modified_steps_and_actions(self):
-        state = {
-            "journey_view_editor_journey_id": "J001",
-            "journey_view_editor_journey_name": "Knowledge Summary",
-            "journey_view_editor_module_domain": "D&IG",
-            "journey_view_editor_user_roles": ["Product Manager"],
-            "journey_view_editor_frequency": "Daily",
-            "journey_view_editor_complexity": "Medium",
-            "journey_view_editor_interview_date": date(2026, 4, 27),
-            "journey_view_editor_interviewer": "Wajih",
-            "journey_view_steps": [{"step_number": 1}],
-            "journey_view_step_0_step_number": 1,
-            "journey_view_step_0_user_action": "User updates Knowledge Summary",
-            "journey_view_step_0_screen_component": "Summary dialog",
-            "journey_view_step_0_tables_read_known": ["hive_account"],
-            "journey_view_step_0_tables_read_extra": "legacy_reference",
-            "journey_view_step_0_tables_written_known": ["hive_summary"],
-            "journey_view_step_0_tables_written_extra": "",
-            "journey_view_step_0_write_op_hive_summary": "UPDATE",
-            "journey_view_step_0_validation_rules": "Title is mandatory",
-            "journey_view_step_0_business_rules": "Only owner can update",
-            "journey_view_step_0_notes": "Inline edit",
-            "journey_view_step_0_transitions_data": pd.DataFrame(
-                [
-                    {
-                        "entity_table": "hive_summary",
-                        "status_field_name": "statuscode",
-                        "from_state": "Draft",
-                        "to_state": "Published",
-                        "trigger_action": "Save",
-                        "user_role_required": "Product Manager",
-                        "validation_rules": "Title is mandatory",
-                        "side_effects": "Notify owner",
-                    }
-                ]
+    def test_user_journey_mapping_sections_match_business_flow_workbook(self):
+        self.assertEqual(
+            BUSINESS_FLOW_SECTIONS,
+            (
+                "Scenarios",
+                "Table Roles",
+                "End-to-End Summary",
+                "Key Modeling Rules",
             ),
-        }
-        catalog_tables = {
-            "hive_account": {"table_key": "hive_account", "table_name": "hive_account"},
-            "hive_summary": {"table_key": "hive_summary", "table_name": "hive_summary"},
-        }
-        store = Mock()
-
-        with patch("ui.journeys.st.session_state", state):
-            errors = _save_view_editor_journey(store, catalog_tables, "tester")
-
-        self.assertEqual(errors, [])
-        store.save_journey.assert_called_once()
-        kwargs = store.save_journey.call_args.kwargs
-        self.assertEqual(kwargs["journey"]["journey_id"], "J001")
-        self.assertEqual(kwargs["steps"][0]["user_action"], "User updates Knowledge Summary")
-        self.assertEqual(kwargs["steps"][0]["status_field_changes"], "hive_summary.statuscode: Draft → Published")
-        self.assertIn(
-            {
-                "journey_id": "J001",
-                "step_number": 1,
-                "table_name": "hive_summary",
-                "access_mode": "WRITE",
-                "write_operation": "UPDATE",
-                "is_catalog_table": True,
-                "catalog_table_key": "hive_summary",
-            },
-            kwargs["step_tables"],
         )
-        self.assertEqual(kwargs["transitions"][0]["to_state"], "Published")
+        self.assertNotIn("Capture Journey", BUSINESS_FLOW_SECTIONS)
+        self.assertNotIn("View Journeys", BUSINESS_FLOW_SECTIONS)
+        self.assertNotIn("State Machines", BUSINESS_FLOW_SECTIONS)
+
+    def test_dig_scenarios_match_workbook_shape_and_content(self):
+        df = section_dataframe("D&IG", "Scenarios")
+
+        self.assertEqual(list(df.columns), SCENARIO_COLUMNS)
+        self.assertEqual(len(df), 22)
+        self.assertEqual(df.iloc[0]["Scenario Name"], "Journey -> Discover -> Define/Create -> Idea")
+        self.assertIn("dig_journey_participant", df.iloc[0]["Main Tables"])
+        self.assertIn("Master data creates instances", set(df["Scenario Name"]))
+
+    def test_dig_table_roles_match_workbook_shape_and_content(self):
+        df = section_dataframe("D&IG", "Table Roles")
+
+        self.assertEqual(list(df.columns), TABLE_ROLE_COLUMNS)
+        self.assertEqual(len(df), 26)
+        self.assertEqual(df.iloc[0]["Target Table"], "dig_app_user")
+        self.assertEqual(df.iloc[-1]["Concept"], "Technical Log Event")
+
+    def test_summary_and_rules_are_scoped_by_scrum_team(self):
+        self.assertEqual(available_scrum_teams(), ["D&IG"])
+
+        summary = section_dataframe("D&IG", "End-to-End Summary")
+        rules = section_dataframe("D&IG", "Key Modeling Rules")
+
+        self.assertEqual(list(rules.columns), MODELING_RULE_COLUMNS)
+        self.assertIn("With Journey", set(summary["Path"]))
+        self.assertIn("Journey is optional", set(rules["Rule"]))
+
+    def test_render_selected_business_flow_section_displays_requested_table(self):
+        with (
+            patch("ui.journeys.st.subheader") as subheader,
+            patch("ui.journeys._render_flow_table") as render_table,
+        ):
+            df = _render_selected_business_flow_section("D&IG", "Key Modeling Rules")
+
+        subheader.assert_called_once_with("Key Modeling Rules - D&IG")
+        render_table.assert_called_once()
+        self.assertEqual(list(df.columns), MODELING_RULE_COLUMNS)
+
+    def test_render_journey_mapping_uses_scrum_team_and_section_controls(self):
+        with (
+            patch("ui.journeys.st.caption"),
+            patch("ui.journeys.st.selectbox", return_value="D&IG") as selectbox,
+            patch("ui.journeys._selected_section", return_value="Table Roles") as selected_section,
+            patch("ui.journeys._render_selected_business_flow_section") as render_section,
+            patch("ui.journeys.st.download_button"),
+        ):
+            render_section.return_value = section_dataframe("D&IG", "Table Roles")
+
+            render_journey_mapping({}, "tester")
+
+        selectbox.assert_called_once()
+        selected_section.assert_called_once_with("Scenarios")
+        render_section.assert_called_once_with("D&IG", "Table Roles")
 
 
 if __name__ == "__main__":
